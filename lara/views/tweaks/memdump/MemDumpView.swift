@@ -235,9 +235,15 @@ struct MemDumpView: View {
     }
 
     // MARK: - region preview
+    @State private var regionerror: String? = nil
 
     private var regionsection: some View {
         Section {
+            if let error = regionerror {
+                PlainAlert(title: "Region walk failed", icon: "exclamationmark.triangle",
+                           text: error, color: .red)
+            }
+
             if loadingregions {
                 HStack {
                     ProgressView()
@@ -485,16 +491,19 @@ struct MemDumpView: View {
         binaryPath = ""
         regionCount = 0
         dumpableCount = 0
+        regionerror = nil
         rebuildregions()
     }
 
     private func rebuildregions() {
         guard let proc = selected, mgr.dsready else { return }
         loadingregions = true
+        regionerror = nil
 
         DispatchQueue.global(qos: .userInitiated).async {
             let dict = mem_regions(proc.pid, NSInteger(integerLiteral: preset), includeLarge) ?? [:]
             let fresh = parseRegions(dict)
+            let error = dict["error"] as? String
 
             DispatchQueue.main.async {
                 regions = fresh.regions
@@ -502,6 +511,7 @@ struct MemDumpView: View {
                 binaryPath = fresh.binaryPath
                 regionCount = fresh.count
                 dumpableCount = fresh.dumpable
+                regionerror = error
                 loadingregions = false
             }
         }
