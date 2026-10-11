@@ -121,7 +121,7 @@
     NSURL *url = [NSURL fileURLWithPath:[NSTemporaryDirectory() stringByAppendingPathComponent:@"AirTroller-payload.txt"]];
     NSString *contents = [NSString stringWithFormat:@"AirTroller test payload (%@)\n", [NSDate date]];
     if (![contents writeToURL:url atomically:YES encoding:NSUTF8StringEncoding error:nil]) {
-        self.lastError = @"could not write the AirTroller payload file";
+        AirTrollerBridge.shared.lastError = @"could not write the AirTroller payload file";
         return nil;
     }
     return url;
