@@ -5,21 +5,23 @@
 # lara/kexploit/pe/memdump.m) and creates one memory block per dumped region,
 # at its ORIGINAL virtual address, named "<class>_0x<start>", with R/W/X flags
 # taken from the region's protection, and sources the region bytes into it.
-# The image base is set to the lowest dumped address.
+# Blocks are never relocated: on a program that already has blocks the image
+# base is left alone, because setImageBase() moves every block by the delta.
 #
 # Usage
 #   GUI:  open (or create) an empty/raw program in Ghidra, then run this script
 #         from the Script Manager (Window > Script Manager). It asks for the
-#         dump folder with askDirectory.
+#         dump folder with askDirectory, so an empty program works too.
 #
-#   headless:
+#   headless (analyzeHeadless, processor AARCH64 for an iPhone image):
 #     <GHIDRA>/support/analyzeHeadless <tmpProjDir> lara_import \
 #         -import dummy.bin \
-#         -processor ARM:LE:64:v8A \
+#         -processor AARCH64:LE:64:v8A \
 #         -postScript lara_dump_to_ghidra.py /path/to/<name>.<pid>.<ts>
 #
 #     analyzeHeadless -process works on an existing program too. The argument
-#     may be a bare path or "dumpDir=/path/to/dump".
+#     may be a bare path or "dumpDir=/path/to/dump"; pointing at the parent
+#     lara_dumps folder imports the newest dump found.
 #
 # Jython 2.7 compatible (Ghidra's own Python). Only the standard library is
 # used, plus Ghidra's script globals (currentProgram, askDirectory, ...).
@@ -73,17 +75,6 @@ def block_name(region):
     return "%s_0x%x" % (region.get("class", "region"), parse_int(region.get("start"), 0))
 
 
-def dump_dir_from_arg(raw):
-    """Script argument, "dumpDir=/path" or a plain path, or a parent folder."""
-    if not raw:
-        return None
-    if "=" in raw:
-        raw = raw.split("=", 1)[1]
-    if os.path.isfile(raw) and raw.endswith(".json"):
-        raw = os.path.dirname(raw)
-    return find_dump_dir(raw)
-
-
 def find_dump_dir(path):
     """path is a dump folder, or a parent folder containing dump folders."""
     if os.path.isfile(os.path.join(path, "manifest.json")):
@@ -104,12 +95,45 @@ def find_dump_dir(path):
     return candidates[-1]
 
 
+def get_script_args():
+    """Script arguments passed to -postScript, when Ghidra exposes them."""
+    try:
+        return [str(v) for v in getScriptArgs() if v]
+    except NameError:
+        pass
+    except Exception:
+        pass
+    try:
+        return [str(v) for v in state.getScriptArgs() if v]
+    except Exception:
+        pass
+    return []
+
+
 def get_dump_dir():
-    """Script args in headless, askDirectory in the GUI (askDirectory also
-    consumes script args itself, which is what we want in both cases)."""
-    selected = askDirectory("lara dump folder", "Import")
+    """askDirectory covers both environments: it prompts in the GUI and, when
+    script arguments were set, it returns the next one instead. The script args
+    are only consulted if askDirectory could not answer (headless without an
+    argument, or a cancelled dialog)."""
+    try:
+        selected = askDirectory("lara dump folder", "Import")
+    except Exception as exc:
+        log("askDirectory failed (%s), falling back to script args" % exc)
+        selected = None
+
     if selected is None:
+        for raw in get_script_args():
+            if not raw:
+                continue
+            path = raw.split("=", 1)[1] if "=" in raw else raw
+            if os.path.isfile(path) and path.endswith(".json"):
+                path = os.path.dirname(path)
+            found = find_dump_dir(path)
+            if found:
+                log("dump folder taken from the script argument: %s" % found)
+                return found
         return None
+
     return find_dump_dir(str(selected))
 
 

@@ -84,7 +84,7 @@ NS_ASSUME_NONNULL_BEGIN
 /// Fired on the browser callback queue whenever discovered people change.
 @property (nonatomic, copy, nullable) void (^onDiscoveryChanged)(void);
 
-+ (instancetype)shared;
+@property (class, readonly, strong) AirTrollerBridge *shared;
 
 /// Sharing.framework reachable + SFAirDropNode/-SFAirDropBrowser present.
 + (BOOL)isSupported;
