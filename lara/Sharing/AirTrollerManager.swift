@@ -15,6 +15,7 @@
 import Foundation
 import UIKit
 import CoreGraphics
+import Combine
 
 /// Stop signal shared between the main queue (writes) and the worker (reads).
 private let airtrollerlock = NSLock()
