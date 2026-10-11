@@ -12,6 +12,7 @@
 
 #import <dlfcn.h>
 #import <objc/runtime.h>
+#import <xpc/xpc.h>
 
 #pragma mark - browser delegate (module private)
 
@@ -142,6 +143,41 @@
         return NO;
     }
     return YES;
+}
+
+#pragma mark diagnostics
+
++ (NSString *)probeSharingdReachability {
+    xpc_connection_t connection = xpc_connection_create_mach_service("com.apple.sharingd", NULL, 0);
+    if (connection == NULL) {
+        return @"xpc_connection_create_mach_service returned NULL";
+    }
+
+    // No message is sent: a sandbox/entitlement denial invalidates the
+    // connection the moment it is resumed, so watching for that distinguishes
+    // "blocked" from "reachable" without provoking sharingd.
+    __block NSString *status = @"reachable (connection stayed valid)";
+    dispatch_semaphore_t semaphore = dispatch_semaphore_create(0);
+
+    xpc_connection_set_event_handler(connection, ^(xpc_object_t event) {
+        if (xpc_get_type(event) != XPC_TYPE_ERROR) {
+            return;
+        }
+        if (event == XPC_ERROR_CONNECTION_INVALID) {
+            status = @"connection invalid - sandbox/entitlement denied";
+        } else if (event == XPC_ERROR_CONNECTION_INTERRUPTED) {
+            status = @"connection interrupted";
+        } else {
+            const char *description = xpc_dictionary_get_string(event, XPC_ERROR_KEY_DESCRIPTION);
+            status = [NSString stringWithFormat:@"xpc error: %s", description ?: "?"];
+        }
+        dispatch_semaphore_signal(semaphore);
+    });
+
+    xpc_connection_resume(connection);
+    dispatch_semaphore_wait(semaphore, dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.5 * NSEC_PER_SEC)));
+    xpc_connection_cancel(connection);
+    return status;
 }
 
 #pragma mark payload

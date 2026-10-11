@@ -109,6 +109,12 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, readonly) NSInteger delegateEventCount;
 @property (nonatomic, readonly) NSInteger lastPeopleCount;
 
+/// Diagnostic: can this process reach the com.apple.sharingd Mach service (the
+/// daemon SFBrowser talks to)? Returns a short human-readable status. A
+/// "connection invalid" result means the app sandbox/entitlements are blocking
+/// the lookup, which no amount of AirDrop settings will fix.
++ (NSString *)probeSharingdReachability;
+
 /// Name of an SFOperation event, e.g. 5 -> "Started".
 /// Prefers the framework's own _SFOperationEventToString when it resolves.
 + (NSString *)nameForOperationEvent:(NSInteger)event;

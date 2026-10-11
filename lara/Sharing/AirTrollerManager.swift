@@ -238,11 +238,13 @@ final class AirTrollerManager: ObservableObject {
             let bridge = AirTrollerBridge.shared
             let ok = bridge.startDiscovery(withBundleID: bundleid, sessionID: sessionid, urlsBeingShared: payload.map { [$0] })
             let failure = ok ? "" : (bridge.lastError ?? "")
+            let probe = AirTrollerBridge.probeSharingdReachability()
             DispatchQueue.main.async { [weak self] in
                 guard let self = self else { return }
                 if ok {
                     self.payloadpath = payload?.path ?? "(payload failed)"
                     self.appendlog("browse: browser started")
+                    self.appendlog("browse: sharingd reachability: \(probe)")
                 } else {
                     self.isscanning = false
                     self.status = "browse failed"
