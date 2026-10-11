@@ -61,7 +61,6 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)setSessionID:(NSString *)sessionID;
 - (void)setUrlsBeingShared:(NSArray *)urls;
 - (void)setDelegate:(id)delegate;
-- (void)updateDiscoveredPeople;
 - (NSArray *)people;
 - (NSDictionary *)nodeIDToNode;
 @end
@@ -70,8 +69,9 @@ NS_ASSUME_NONNULL_BEGIN
     Best-effort mirror of the *optional* <SFAirDropBrowserDelegate> callbacks.
     Only the selector names that actually exist in the Sharing binary are
     implemented (browser:didInsertPersonAtIndex:, browser:didDeletePersonAtIndex:,
-    browserDidChangePeople:, browserDidUpdateMePeople:knownPeople:unknownPeople:).
-    They are a pure accelerator: discovery also works with the poll timer alone.
+    browserDidChangePeople:, browserDidUpdateMePeople:knownPeople:unknownPeople:,
+    browserDidUpdatePeople:). browserDidUpdatePeople: carries the discovered node
+    list as its argument — it is the data source the share sheet itself uses.
  */
 @protocol AirTrollerBrowserEvents <NSObject>
 @optional

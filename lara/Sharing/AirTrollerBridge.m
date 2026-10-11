@@ -19,9 +19,13 @@
 
 @property (nonatomic, copy, nullable) void (^onPeopleChanged)(void);
 
+- (NSArray *)peopleSnapshot;
+
 @end
 
-@implementation AirTrollerBrowserDelegate
+@implementation AirTrollerBrowserDelegate {
+    NSArray *_lastPeople;
+}
 
 - (void)browserDidUpdateMePeople:(id)me knownPeople:(id)known unknownPeople:(id)unknown {
     [self fire];
@@ -32,7 +36,22 @@
 }
 
 - (void)browserDidUpdatePeople:(id)people {
+    // This callback is the only place the node list is delivered: the framework
+    // hands it to the delegate as an argument and never fills
+    // -[SFAirDropBrowser people] on its own (updateDiscoveredPeople has no
+    // internal caller). Stash it; the poll reads this copy.
+    if ([people isKindOfClass:[NSArray class]]) {
+        @synchronized (self) {
+            _lastPeople = [(NSArray *)people copy];
+        }
+    }
     [self fire];
+}
+
+- (NSArray *)peopleSnapshot {
+    @synchronized (self) {
+        return _lastPeople;
+    }
 }
 
 - (void)browser:(id)browser didInsertPersonAtIndex:(id)index {
@@ -233,15 +252,18 @@
             return snapshot;
         }
 
-        // The framework only fills `people` from the underlying SFBrowser
-        // children inside -updateDiscoveredPeople (the share sheet calls it from
-        // its browserDidUpdatePeople: callback). Refresh before reading or the
-        // list is always empty.
-        if ([browser respondsToSelector:@selector(updateDiscoveredPeople)]) {
-            [browser updateDiscoveredPeople];
+        // The framework delivers discovered nodes to the delegate in
+        // browserDidUpdatePeople: and does NOT populate -[SFAirDropBrowser people]
+        // itself. Calling -updateDiscoveredPeople here runs a mutation off the
+        // framework's own queue and crashes, so never call it — use the copy the
+        // delegate captured, and only fall back to the getter if it is empty.
+        NSArray *people = [self.browserDelegate peopleSnapshot];
+        if (![people isKindOfClass:[NSArray class]] || people.count == 0) {
+            NSArray *direct = [browser people];
+            if ([direct isKindOfClass:[NSArray class]] && direct.count > 0) {
+                people = direct;
+            }
         }
-
-        NSArray *people = [browser people];
         if (![people isKindOfClass:[NSArray class]]) {
             return snapshot;
         }
