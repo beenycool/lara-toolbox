@@ -34,6 +34,9 @@ NS_ASSUME_NONNULL_BEGIN
 - (NSString *)displayNameForLocale:(NSLocale *)locale;
 - (BOOL)isDisabled;
 - (BOOL)isMe;
+- (nullable id)nodeIdentifier;
+- (nullable NSString *)model;
+- (nullable NSArray *)formattedHandles;
 - (void)startSendForBundleID:(nullable NSString *)bundleID
                    sessionID:(nullable NSString *)sessionID
                        items:(NSArray *)items
