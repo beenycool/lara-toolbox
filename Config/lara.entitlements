@@ -48,5 +48,16 @@
 	<true/>
 	<key>com.apple.developer.kernel.increased-memory-limit</key>
 	<true/>
+	<!-- CarPlay: template scene gate. RE of iOS 26 CarPlay.framework shows
+	     -[CPTemplateApplicationScene _shouldCreateCarWindow] reduces to
+	     _CPCurrentProcessHasMapsEntitlement, which checks this key via
+	     bundleProxyForCurrentProcess + entitlementValuesForKeys + boolForKey.
+	     TrollStore/CoreTrust self-grants it, so the head-unit scene passes
+	     the gate on-device. No Apple approval needed for TrollStore installs,
+	     but a real App Store build still requires an approved CarPlay
+	     entitlement profile. This does NOT enable pixel screen mirroring:
+	     CarPlay only allows template UI (lists/grids/alerts). -->
+	<key>com.apple.developer.carplay-maps</key>
+	<true/>
 </dict>
 </plist>
