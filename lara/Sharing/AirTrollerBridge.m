@@ -349,7 +349,7 @@
                        previewImage:previewImage
                      fromShareSheet:fromShareSheet];
     } @catch (NSException *exception) {
-        self.errorText = [NSString stringWithFormat:@"startSend raised %@", exception.reason ?: @"unknown"];
+        self.lastError = [NSString stringWithFormat:@"startSend raised %@", exception.reason ?: @"unknown"];
         return NO;
     }
 
