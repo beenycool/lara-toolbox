@@ -151,7 +151,7 @@ struct SideloadDurabilityView: View {
             .onAppear {
                 refresh()
             }
-            .onChange(of: mgr.sbxready) { _, ready in
+            .onChange(of: mgr.sbxready) { ready in
                 if ready {
                     refresh()
                 }
