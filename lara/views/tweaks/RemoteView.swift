@@ -50,6 +50,14 @@ struct RemoteView: View {
             }
 
             Section {
+                NavigationLink("Status Bar Override Studio", destination: StatusBarStudioView(mgr: mgr))
+            } header: {
+                Text("Status Bar")
+            } footer: {
+                Text("Carrier text overrides and status item refreshes via RemoteCall into SpringBoard.")
+            }
+
+            Section {
                 Button {
                     run("Hide Icon Labels") {
                         let hidden = hide_icon_labels(mgr.sbProc)

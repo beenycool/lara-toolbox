@@ -39,6 +39,8 @@ struct TweaksView: View {
                         .disabled(!mgr.sbxready)
                     NavigationLink("JIT Enabler", destination: JitView())
                         .disabled(!mgr.sbxready)
+                    NavigationLink("Sideload Durability", destination: SideloadDurabilityView())
+                        .disabled(!mgr.sbxready)
                 }
                 
                 Section(header: HeaderLabel(text: "User Interface", icon: "eye")) {
@@ -52,6 +54,17 @@ struct TweaksView: View {
                         .disabled(!mgr.vfsready)
                     NavigationLink("SystemColor Patcher", destination: SystemColor(mgr: mgr))
                         .disabled(!mgr.sbxready || !mgr.vfsready)
+                    NavigationLink("Control Center Layout", destination: CCEditorView(mgr: mgr))
+                        .disabled(!mgr.sbxready)
+                    NavigationLink("Icon Toolbox", destination: IconStateView(mgr: mgr))
+                        .disabled(!mgr.sbxready)
+                    NavigationLink("Global UI Preferences", destination: GlobalPrefsView(mgr: mgr))
+                        .disabled(!mgr.sbxready)
+                }
+                
+                Section(header: HeaderLabel(text: "CarPlay", icon: "car.fill")) {
+                    NavigationLink("CarPlay Mod", destination: CarPlayModView(mgr: mgr))
+                        .disabled(!mgr.dsready)
                 }
                 
                 Section(header: HeaderLabel(text: "System", icon: "gear")) {
@@ -61,6 +74,22 @@ struct TweaksView: View {
                         .disabled(!mgr.vfsready)
                     NavigationLink("OTA Updates", destination: OTAView(mgr: mgr))
                     NavigationLink("Screen Time", destination: ScreenTimeView(mgr: mgr))
+                    NavigationLink("FTP Server", destination: FTPView())
+                        .disabled(!mgr.sbxready)
+                }
+                
+                Section(header: HeaderLabel(text: "Lab", icon: "flask")) {
+                    NavigationLink("Sounds & Display (Lab)", destination: SoundsAndDisplayView(mgr: mgr))
+                        .disabled(!mgr.vfsready && !mgr.sbxready)
+                }
+                
+                Section(header: HeaderLabel(text: "Security", icon: "lock.shield")) {
+                    NavigationLink("Kernel Security Toggles", destination: SecurityTogglesView())
+                        .disabled(!mgr.dsready)
+                }
+                
+                Section(header: HeaderLabel(text: "Spoofing", icon: "theatermasks")) {
+                    NavigationLink("Device & Status Spoofer", destination: StatusBarFakesView(mgr: mgr))
                 }
                 
                 Section(header: HeaderLabel(text: "Broken", icon: "exclamationmark.triangle.fill")) {

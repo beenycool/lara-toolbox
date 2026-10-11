@@ -20,6 +20,8 @@
 #import "persistence.h"
 #import "ota.h"
 #import "screentime.h"
+#import "mis.h"
+#import "security_ext.h"
 
 #import <zlib.h>
 

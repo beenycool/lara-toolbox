@@ -478,6 +478,50 @@ final class laramgr: ObservableObject {
         }
     }
     
+    // dirtyZero repair additions
+    @discardableResult
+    func vfszeroatoffset(path: String, offset: UInt64, length: UInt64) -> Bool {
+        guard vfsready else {
+            self.logmsg("(vfs) zero_at_offset failed (vfs not ready)")
+            return false
+        }
+
+        let ok = path.withCString { cpath in
+            vfs_zero_at_offset(cpath, offset, length)
+        }
+
+        if !ok {
+            self.logmsg("(vfs) zero_at_offset failed (\(path) offset=\(offset) length=\(length))")
+            return false
+        }
+
+        self.logmsg("(vfs) zeroed \(length) bytes at offset \(offset) of \(path)")
+        return true
+    }
+
+    // dirtyZero repair additions
+    @discardableResult
+    func vfsoverwriteatoffset(path: String, offset: UInt64, data: Data) -> Bool {
+        guard vfsready else {
+            self.logmsg("(vfs) overwrite_at_offset failed (vfs not ready)")
+            return false
+        }
+
+        let ok = data.withUnsafeBytes { ptr in
+            path.withCString { cpath in
+                vfs_overwrite_at_offset(cpath, offset, ptr.baseAddress, UInt64(data.count))
+            }
+        }
+
+        if !ok {
+            self.logmsg("(vfs) overwrite_at_offset failed (\(path) offset=\(offset) length=\(data.count))")
+            return false
+        }
+
+        self.logmsg("(vfs) overwrote \(data.count) bytes at offset \(offset) of \(path)")
+        return true
+    }
+    
     func sbxgettoken(pid: Int32) -> UInt64? {
         let addr = sbx_gettoken(pid)
 

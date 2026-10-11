@@ -9,6 +9,11 @@
   <p>star this repo please :P</p>
 </div>
 
+> **This is a fork** of [rooootdev/lara](https://github.com/rooootdev/lara) with additional system-wide toolbox features:
+> CarPlay mods (wallpapers/capabilities), device & status bar spoofing, Control Center layout editor,
+> sideload durability, FTP server, home-screen icon toolbox, UI preferences, and a kernel security lab.
+> Integration notes for each feature live in [`docs/dev/`](docs/dev/). Still AGPL-3.0.
+
 <p align="center">
   <a href="https://discord.gg/gw8PcRF3Jr">
     <img src="https://img.shields.io/badge/Discord-Join%20Server-7289DA.svg" alt="Discord">

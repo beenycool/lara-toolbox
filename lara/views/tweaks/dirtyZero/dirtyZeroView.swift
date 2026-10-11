@@ -20,7 +20,7 @@ struct dirtyZeroView: View {
                         applyTweaks()
                     })
                     Button("Respring", action: {
-                        mgr.respring()
+                        localRespring()
                     })
                     Toggle("Enable Risky Tweaks", isOn: $enableRiskyTweaks)
                 }
@@ -38,7 +38,15 @@ struct dirtyZeroView: View {
                     if section.isExpanded {
                         ForEach($section.tweaks) { $tweak in
                             if (doubleSystemVersion() >= tweak.minSupportedVersion && doubleSystemVersion() <= tweak.maxSupportedVersion) || weonadebugbuild_pjbweouttahereexclamationmark {
-                                PlainToggle(text: tweak.name, icon: tweak.icon, isOn: $tweak.isOn)
+                                PlainToggle(
+                                    text: tweak.name,
+                                    icon: tweak.icon,
+                                    infoType: tweak.disabledOnUnsupported ? .warning : .none,
+                                    infoTitle: "Unavailable",
+                                    infoMessage: "The files this tweak patches were not found on this iOS version, so it was disabled after the last apply.",
+                                    isOn: $tweak.isOn
+                                )
+                                .disabled(tweak.disabledOnUnsupported)
                             }
                         }
                     }
@@ -48,17 +56,80 @@ struct dirtyZeroView: View {
     }
     
     func applyTweaks() {
-        let tweaks = tweakArray.flatMap { $0.tweaks }.filter { $0.isOn }
-        
-        for tweak in tweaks {
-            for path in tweak.paths {
-                _ = mgr.vfszeropage(at: path, dumb: true)
+        var applied = 0
+        var skipped = 0
+        var failed = 0
+
+        for s in tweakArray.indices {
+            for t in tweakArray[s].tweaks.indices {
+                guard tweakArray[s].tweaks[t].isOn else { continue }
+                let tweak = tweakArray[s].tweaks[t]
+                var appliedForTweak = 0
+                var existingForTweak = 0
+
+                for path in tweak.paths {
+                    // dirtyZero repair: preflight the target (existence + size) so
+                    // targets that no longer exist on this iOS version are skipped
+                    // and logged instead of being silently attempted.
+                    let attrs = try? FileManager.default.attributesOfItem(atPath: path)
+                    guard let attrs, let size = (attrs[.size] as? NSNumber)?.int64Value, size > 0 else {
+                        skipped += 1
+                        mgr.logmsg("(dirtyZero) skipped missing or empty target for '\(tweak.name)': \(path)")
+                        continue
+                    }
+
+                    existingForTweak += 1
+                    mgr.logmsg("(dirtyZero) '\(tweak.name)' -> \(path) (\(size) bytes)")
+
+                    // Note: no byte offsets are documented anywhere in this repo for
+                    // these targets, so they are still zeroed whole-file. If exact
+                    // offsets are ever documented, use mgr.vfszeroatoffset(...).
+                    if mgr.vfszeropage(at: path, dumb: true) {
+                        applied += 1
+                        appliedForTweak += 1
+                    } else {
+                        failed += 1
+                    }
+                }
+
+                let disabled = existingForTweak == 0
+                if tweakArray[s].tweaks[t].disabledOnUnsupported != disabled {
+                    tweakArray[s].tweaks[t].disabledOnUnsupported = disabled
+                }
+                if disabled {
+                    mgr.logmsg("(dirtyZero) '\(tweak.name)' disabled: no target files exist on this iOS version")
+                } else if appliedForTweak == 0 {
+                    mgr.logmsg("(dirtyZero) '\(tweak.name)': zeroing failed for every existing target")
+                }
             }
         }
-        
-        Alertinator.shared.alert(title: "Attempted to apply all tweaks!", body: "Please respring your device to see any changes. Zeroing files with DarkSword is finicky, so you may have to apply multiple times!", actionLabel: "Respring", action: {
-            mgr.respring()
-        })
+
+        let body = "Applied \(applied) file(s), \(failed) failed, skipped \(skipped) missing/empty file(s).\nZeroing files with DarkSword is finicky, so you may have to apply multiple times!"
+
+        if applied > 0 {
+            Alertinator.shared.alert(title: "Attempted to apply all tweaks!", body: body, actionLabel: "Respring", action: {
+                localRespring()
+            })
+        } else {
+            Alertinator.shared.alert(title: "Attempted to apply all tweaks!", body: body)
+        }
+    }
+
+    private func localRespring() {
+        // dirtyZero repair: restart SpringBoard locally using the repo's
+        // crashproc() primitive (declared in kexploit/utils.h) instead of loading
+        // the WebKit respring page that mgr.respring() overlays.
+        guard mgr.dsready else {
+            mgr.logmsg("(dirtyZero) not respringing: kernel r/w is not ready")
+            return
+        }
+
+        mgr.logmsg("(dirtyZero) restarting SpringBoard via crashproc()")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+            _ = "SpringBoard".withCString { cname in
+                crashproc(cname)
+            }
+        }
     }
 }
 

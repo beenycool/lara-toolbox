@@ -24,6 +24,37 @@ struct ZeroTweak: Identifiable, Equatable, Encodable, Decodable {
     var maxSupportedVersion: Double = 99.0
     var isOn: Bool = false
     var paths: [String]
+    // dirtyZero repair: schema extension. dirtyZeroView's apply preflight sets
+    // this when none of the target files exist on the running iOS version (the
+    // iOS 26 "Liquid Glass" file set renamed/removed several of the old paths).
+    var disabledOnUnsupported: Bool = false
+
+    enum CodingKeys: String, CodingKey {
+        case name, icon, minSupportedVersion, maxSupportedVersion, isOn, paths, disabledOnUnsupported
+    }
+
+    init(name: String, icon: String, minSupportedVersion: Double = 0.0, maxSupportedVersion: Double = 99.0, isOn: Bool = false, paths: [String], disabledOnUnsupported: Bool = false) {
+        self.name = name
+        self.icon = icon
+        self.minSupportedVersion = minSupportedVersion
+        self.maxSupportedVersion = maxSupportedVersion
+        self.isOn = isOn
+        self.paths = paths
+        self.disabledOnUnsupported = disabledOnUnsupported
+    }
+
+    // dirtyZero repair: decode old AppStorage JSON that predates
+    // disabledOnUnsupported (missing key => false) without resetting the tweak list.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        name = try c.decode(String.self, forKey: .name)
+        icon = try c.decode(String.self, forKey: .icon)
+        minSupportedVersion = try c.decodeIfPresent(Double.self, forKey: .minSupportedVersion) ?? 0.0
+        maxSupportedVersion = try c.decodeIfPresent(Double.self, forKey: .maxSupportedVersion) ?? 99.0
+        isOn = try c.decodeIfPresent(Bool.self, forKey: .isOn) ?? false
+        paths = try c.decode([String].self, forKey: .paths)
+        disabledOnUnsupported = try c.decodeIfPresent(Bool.self, forKey: .disabledOnUnsupported) ?? false
+    }
 }
 
 enum TweakArray {
