@@ -181,14 +181,9 @@ final class ftpserver: ObservableObject {
                 return
             }
 
-            // scope to Wi-Fi (en0) so the full-disk server is not reachable over cellular/VPN interfaces
-            let wifiIndex = if_nametoindex("en0")
-            if wifiIndex > 0 {
-                listener.requiredInterface = wifiIndex
-                self.log("(ftp) bound to Wi-Fi interface index \(wifiIndex)")
-            } else {
-                self.log("(ftp) WARNING: Wi-Fi interface not found; listener binds all interfaces")
-            }
+            // scope to Wi-Fi so the full-disk server is not reachable over cellular/VPN interfaces
+            parameters.requiredInterfaceType = .wifi
+            self.log("(ftp) listener scoped to Wi-Fi (requiredInterfaceType = .wifi)")
 
             listener.newConnectionHandler = { [weak self] connection in
                 self?.accept(connection)
