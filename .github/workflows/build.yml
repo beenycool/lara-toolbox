@@ -33,7 +33,15 @@ jobs:
       - name: build
         run: |
           chmod +x scripts/build_ipa.sh
-          ./scripts/build_ipa.sh
+          set +e
+          ./scripts/build_ipa.sh 2>&1 | tee /tmp/lara-build.log
+          status=${PIPESTATUS[0]}
+          if [ "$status" -ne 0 ]; then
+            echo "================ XCODE ERRORS ================"
+            grep -nE "error:|fatal error" /tmp/lara-build.log | tail -n 120 || true
+            echo "=============================================="
+          fi
+          exit "$status"
 
       - name: upload artifact (PR only)
         if: github.event_name == 'pull_request'
