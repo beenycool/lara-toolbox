@@ -236,15 +236,33 @@ final class AirTrollerManager: ObservableObject {
 
         workqueue.async {
             let bridge = AirTrollerBridge.shared
-            let ok = bridge.startDiscovery(withBundleID: bundleid, sessionID: sessionid, urlsBeingShared: payload.map { [$0] })
-            let failure = ok ? "" : (bridge.lastError ?? "")
-            let probe = AirTrollerBridge.probeSharingdReachability()
+            var ok = bridge.startDiscovery(withBundleID: bundleid, sessionID: sessionid, urlsBeingShared: payload.map { [$0] })
+            var failure = ok ? "" : (bridge.lastError ?? "")
+            var probe = AirTrollerBridge.probeSharingdReachability()
+            var bypassnote = ""
+
+            // The base sandbox profile blocks the com.apple.sharingd mach-lookup
+            // on a sideload. Drop the sandbox (same state as the private
+            // no-sandbox entitlement) and rebuild the browser if that clears it.
+            if probe.contains("denied") || probe.contains("invalid") {
+                bypassnote = AirTrollerBridge.attemptSharingdSandboxBypass()
+                if bypassnote.contains("SUCCESS") {
+                    bridge.stopDiscovery()
+                    ok = bridge.startDiscovery(withBundleID: bundleid, sessionID: sessionid, urlsBeingShared: payload.map { [$0] })
+                    failure = ok ? "" : (bridge.lastError ?? "")
+                    probe = AirTrollerBridge.probeSharingdReachability()
+                }
+            }
+
             DispatchQueue.main.async { [weak self] in
                 guard let self = self else { return }
                 if ok {
                     self.payloadpath = payload?.path ?? "(payload failed)"
                     self.appendlog("browse: browser started")
                     self.appendlog("browse: sharingd reachability: \(probe)")
+                    if !bypassnote.isEmpty {
+                        self.appendlog("browse: sandbox bypass: \(bypassnote)")
+                    }
                 } else {
                     self.isscanning = false
                     self.status = "browse failed"

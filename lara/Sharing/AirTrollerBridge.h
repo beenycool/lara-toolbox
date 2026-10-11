@@ -115,6 +115,12 @@ NS_ASSUME_NONNULL_BEGIN
 /// the lookup, which no amount of AirDrop settings will fix.
 + (NSString *)probeSharingdReachability;
 
+/// Action: drop this process's sandbox (the runtime equivalent of the private
+/// no-sandbox entitlement) so the base profile's mach-lookup rule stops blocking
+/// com.apple.sharingd. The previous state is restored if the probe still fails.
+/// Returns a human-readable status.
++ (NSString *)attemptSharingdSandboxBypass;
+
 /// Name of an SFOperation event, e.g. 5 -> "Started".
 /// Prefers the framework's own _SFOperationEventToString when it resolves.
 + (NSString *)nameForOperationEvent:(NSInteger)event;
