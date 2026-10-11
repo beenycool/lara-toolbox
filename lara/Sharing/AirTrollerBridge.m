@@ -18,6 +18,8 @@
 @interface AirTrollerBrowserDelegate : NSObject <AirTrollerBrowserEvents>
 
 @property (nonatomic, copy, nullable) void (^onPeopleChanged)(void);
+@property (nonatomic, assign) NSInteger eventCount;
+@property (nonatomic, assign) NSInteger lastPeopleCount;
 
 - (NSArray *)peopleSnapshot;
 
@@ -43,6 +45,7 @@
     if ([people isKindOfClass:[NSArray class]]) {
         @synchronized (self) {
             _lastPeople = [(NSArray *)people copy];
+            _lastPeopleCount = (NSInteger)_lastPeople.count;
         }
     }
     [self fire];
@@ -63,6 +66,9 @@
 }
 
 - (void)fire {
+    @synchronized (self) {
+        _eventCount = _eventCount + 1;
+    }
     void (^block)(void) = self.onPeopleChanged;
     if (block != NULL) {
         block();
@@ -229,6 +235,14 @@
 
 - (BOOL)isDiscovering {
     return self.browser != nil;
+}
+
+- (NSInteger)delegateEventCount {
+    return self.browserDelegate.eventCount;
+}
+
+- (NSInteger)lastPeopleCount {
+    return self.browserDelegate.lastPeopleCount;
 }
 
 - (void)handlePeopleChanged {

@@ -103,6 +103,12 @@ NS_ASSUME_NONNULL_BEGIN
 /// Human readable reason for the last failed bridge call (nil when nothing failed).
 @property (nonatomic, copy, nullable) NSString *lastError;
 
+/// Diagnostics: how many times the framework's browser delegate callbacks fired,
+/// and the node count in the most recent browserDidUpdatePeople:. If events stays
+/// 0 while browsing, discovery is not reaching the framework at all.
+@property (nonatomic, readonly) NSInteger delegateEventCount;
+@property (nonatomic, readonly) NSInteger lastPeopleCount;
+
 /// Name of an SFOperation event, e.g. 5 -> "Started".
 /// Prefers the framework's own _SFOperationEventToString when it resolves.
 + (NSString *)nameForOperationEvent:(NSInteger)event;

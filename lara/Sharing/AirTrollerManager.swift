@@ -162,6 +162,7 @@ final class AirTrollerManager: ObservableObject {
     private let workqueue = DispatchQueue(label: "lara.airtroller", qos: .userInitiated)
     private nonisolated(unsafe) var scanitem: DispatchWorkItem?
     private var nodesbyid: [String: NSObject] = [:]
+    private var loggedemptydiag = false
 
     private static let stampformatter: DateFormatter = {
         let formatter = DateFormatter()
@@ -230,6 +231,7 @@ final class AirTrollerManager: ObservableObject {
 
         isscanning = true
         status = "browsing"
+        loggedemptydiag = false
         appendlog("browse: start SFAirDropBrowser (bundleID=\(bundleid), sessionID=\(sessionid), urls=\(payload != nil ? "1" : "0"))")
 
         workqueue.async {
@@ -302,6 +304,10 @@ final class AirTrollerManager: ObservableObject {
                     self.nodesbyid = [:]
                     self.selectedtargetid = nil
                     self.appendlog("browse: no discoverable nodes any more")
+                }
+                if !self.loggedemptydiag {
+                    self.loggedemptydiag = true
+                    self.appendlog("browse: still no nodes (framework delegate events \(AirTrollerBridge.shared.delegateEventCount), last people \(AirTrollerBridge.shared.lastPeopleCount))")
                 }
                 self.schedulepoll(after: 1.5)
             }
