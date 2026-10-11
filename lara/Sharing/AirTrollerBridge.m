@@ -148,7 +148,19 @@
 #pragma mark diagnostics
 
 + (NSString *)probeSharingdReachability {
-    xpc_connection_t connection = xpc_connection_create_mach_service("com.apple.sharingd", NULL, 0);
+    // The SDK marks xpc_connection_create_mach_service unavailable on iOS, but
+    // the symbol is present at runtime, so resolve it dynamically.
+    typedef xpc_connection_t (*AirTrollerMachServiceFunction)(const char *, dispatch_queue_t, uint64_t);
+    static AirTrollerMachServiceFunction createMachService = NULL;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        createMachService = (AirTrollerMachServiceFunction)dlsym(RTLD_DEFAULT, "xpc_connection_create_mach_service");
+    });
+    if (createMachService == NULL) {
+        return @"xpc_connection_create_mach_service symbol missing";
+    }
+
+    xpc_connection_t connection = createMachService("com.apple.sharingd", NULL, 0);
     if (connection == NULL) {
         return @"xpc_connection_create_mach_service returned NULL";
     }
