@@ -528,7 +528,7 @@ struct CarPlayCapabilitiesEditorView: View {
         .navigationTitle(title)
         .onAppear(perform: loadsnapshot)
         .alert("Apply CarPlay overrides?", isPresented: $showapply) {
-            Button("Apply", role: .default) {
+            Button("Apply") {
                 applyoverrides()
             }
             Button("Cancel", role: .cancel) {}

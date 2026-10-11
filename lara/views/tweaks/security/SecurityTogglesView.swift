@@ -371,7 +371,7 @@ struct SecurityTogglesView: View {
         amfierror = nil
         globallogger.log("(sec) running AMFI probe (read-only)...")
         DispatchQueue.global(qos: .userInitiated).async {
-            let rawdict: NSDictionary? = sec_amfi_probe()
+            let rawdict = sec_amfi_probe()
             var rows: [amfiprobe] = []
             var error: String? = nil
             var cs: (addr: String, value: Int64, verified: Bool)? = nil
