@@ -493,7 +493,7 @@ struct MemDumpView: View {
         loadingregions = true
 
         DispatchQueue.global(qos: .userInitiated).async {
-            let dict = mem_regions(proc.pid, NSInteger(integerLiteral: preset), includeLarge)
+            let dict = mem_regions(proc.pid, NSInteger(integerLiteral: preset), includeLarge) ?? [:]
             let fresh = parseRegions(dict)
 
             DispatchQueue.main.async {
@@ -537,7 +537,7 @@ struct MemDumpView: View {
                 },
                 &cancelflag
             )
-            finish(result)
+            finish(result ?? [:])
         }
     }
 
@@ -571,7 +571,7 @@ struct MemDumpView: View {
                 },
                 &cancelflag
             )
-            finish(result)
+            finish(result ?? [:])
         }
     }
 
