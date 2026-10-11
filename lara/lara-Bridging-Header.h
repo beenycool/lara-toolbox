@@ -22,6 +22,8 @@
 #import "screentime.h"
 #import "mis.h"
 #import "security_ext.h"
+#import "memdump.h"
+#import "Sharing/AirTrollerBridge.h"
 
 #import <zlib.h>
 

@@ -275,7 +275,7 @@ struct SecurityTogglesView: View {
                 .foregroundColor(riskunlocked ? .green : .red)
 
             if riskunlocked {
-                if let current = csvalue {
+                if let current = csvalue, csverified {
                     Toggle("Disable code signing enforcement (write 1)", isOn: Binding(
                         get: { (cspending ?? current) == 1 },
                         set: { newvalue in cspending = newvalue ? 1 : 0 }
@@ -299,6 +299,10 @@ struct SecurityTogglesView: View {
                             .foregroundColor(.green)
                         }
                     }
+                } else if csvalue != nil {
+                    Text("Writes are blocked: cs_enforcement_disable resolved heuristically, not section-verified, so the address cannot be trusted for a write.")
+                        .font(.footnote)
+                        .foregroundColor(.orange)
                 } else {
                     Text("cs_enforcement_disable is unresolved on this build; writes are refused.")
                         .font(.footnote)
@@ -308,7 +312,7 @@ struct SecurityTogglesView: View {
         } header: {
             Text("AMFI Write")
         } footer: {
-            Text("Single variable only: cs_enforcement_disable (0 = enforcement on, 1 = enforcement disabled). If the address is heuristic it is not guaranteed to be the real variable. Every write is read back and logged.")
+            Text("Single variable only: cs_enforcement_disable (0 = enforcement on, 1 = enforcement disabled). Writes are blocked unless the address is section-verified; heuristic candidates are refused. Every write is read back and logged.")
         }
     }
 
@@ -429,6 +433,8 @@ struct SecurityTogglesView: View {
                 cspending = nil
                 if ok {
                     csvalue = value
+                    // Re-arm the typed confirmation: a second write needs RISK again.
+                    risktext = ""
                     globallogger.log("(sec) AMFI write ok, cs_enforcement_disable = \(value) (read back verified)")
                 } else {
                     globallogger.log("(sec) AMFI write FAILED/refused (see logs)")

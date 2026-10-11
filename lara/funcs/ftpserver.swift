@@ -107,6 +107,7 @@ final class ftpserver: ObservableObject {
     private var username = "lara"
     private var password = ""
     private var allowanonymous = false
+    private var readonly = false
     private var startpath = "/var/mobile"
 
     private var session: ftpsession?
@@ -132,7 +133,7 @@ final class ftpserver: ObservableObject {
     }
 
     @discardableResult
-    func start(port: UInt16, startpath: String, username: String, password: String, allowanonymous: Bool) -> Bool {
+    func start(port: UInt16, startpath: String, username: String, password: String, allowanonymous: Bool, readonly: Bool) -> Bool {
         guard port > 0, let nwport = NWEndpoint.Port(rawValue: port) else {
             log("invalid port \(port)")
             return false
@@ -162,6 +163,7 @@ final class ftpserver: ObservableObject {
             self.username = trimmeduser
             self.password = password
             self.allowanonymous = allowanonymous
+            self.readonly = readonly
 
             var isdir = ObjCBool(false)
             let exists = FileManager.default.fileExists(atPath: normalized, isDirectory: &isdir)
@@ -177,6 +179,15 @@ final class ftpserver: ObservableObject {
                     server.status = "failed"
                 }
                 return
+            }
+
+            // scope to Wi-Fi (en0) so the full-disk server is not reachable over cellular/VPN interfaces
+            let wifiIndex = if_nametoindex("en0")
+            if wifiIndex > 0 {
+                listener.requiredInterface = wifiIndex
+                self.log("(ftp) bound to Wi-Fi interface index \(wifiIndex)")
+            } else {
+                self.log("(ftp) WARNING: Wi-Fi interface not found; listener binds all interfaces")
             }
 
             listener.newConnectionHandler = { [weak self] connection in
@@ -408,6 +419,12 @@ final class ftpserver: ObservableObject {
         let publicverbs = ["USER", "PASS", "QUIT", "FEAT", "SYST", "NOOP", "OPTS", "CLNT", "HELP", "AUTH", "PBSZ", "PROT"]
         if !session.authenticated && !publicverbs.contains(verb) {
             send("530 Please login with USER and PASS.\r\n")
+            return
+        }
+
+        // Read-only mode is enforced server-side, not only in the UI.
+        if readonly && ["STOR", "DELE", "MKD", "RMD"].contains(verb) {
+            send("550 Read-only mode: \(verb) is disabled.\r\n")
             return
         }
 

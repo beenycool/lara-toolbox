@@ -602,13 +602,27 @@ struct CCEditorView: View {
             error: nil
         )
 
-        source.exists = FileManager.default.fileExists(atPath: path)
-        globallogger.log("(cc) probe \(path): \(source.exists ? "exists" : "not found")")
-        guard source.exists else { return source }
+        // Direct check first, then the same ladder kexploit/mis.m uses. A root-only
+        // candidate used to be reported as "not found" here even though the file
+        // exists, which hid the real Control Center preference file.
+        let ladder = mgr.ladderprobe(path: path)
+        source.exists = ladder.present
+        globallogger.log("(cc) probe \(path): \(ladder.present ? "exists" : "not found") via \(ladder.method)")
+        guard source.exists else {
+            if ladder.errno != 0 && ladder.errno != ENOENT {
+                source.error = "not visible to this process (errno \(ladder.errno))"
+            }
+            return source
+        }
+        if !ladder.readable {
+            source.error = "exists but is not readable by this process (sandbox/DAC) - trying the kernel ladder"
+            globallogger.log("(cc) \(path) is present but not directly readable (errno \(ladder.errno))")
+        }
 
         do {
             let dict = try readPlistDictionary(path: path)
             source.readable = true
+            source.error = nil
             source.topLevelKeys = dict.allKeys.compactMap { $0 as? String }
 
             if let located = findKeyPath(cceditorEnabledKey, in: dict) {
@@ -639,8 +653,11 @@ struct CCEditorView: View {
         do {
             return try loadMutablePlistDictionary(from: URL(fileURLWithPath: path))
         } catch {
-            // Fall back to VFS reads if the sandbox escape cannot read the file.
-            if mgr.vfsready, let data = mgr.vfsread(path: path) {
+            // Fall back to the access ladder: the file exists (the probe said
+            // so) but this process may not open it directly. vfsread() goes
+            // through the VFS layer, and apfs_own() hands a root-owned target
+            // to mobile. Both only run when the direct read failed.
+            if let data = mgr.ladderread(path: path, allowchown: true) {
                 var format = PropertyListSerialization.PropertyListFormat.binary
                 let plist = try PropertyListSerialization.propertyList(
                     from: data,
@@ -650,7 +667,7 @@ struct CCEditorView: View {
                 guard let dict = plist as? NSMutableDictionary else {
                     throw "Property list root is not a dictionary."
                 }
-                globallogger.log("(cc) read \(path) through the VFS fallback")
+                globallogger.log("(cc) read \(path) through the access ladder (vfs / apfs_own fallback)")
                 return dict
             }
             throw error
@@ -752,7 +769,7 @@ struct CCEditorView: View {
 
         do {
             var dict = NSMutableDictionary()
-            if FileManager.default.fileExists(atPath: path) {
+            if mgr.ladderprobe(path: path).present {
                 dict = try readPlistDictionary(path: path)
             } else {
                 globallogger.log("(cc) \(path) does not exist; creating a new plist")
@@ -770,6 +787,7 @@ struct CCEditorView: View {
 
             let data = try verifyPlist(dict, targetPath: path)
             globallogger.log("(cc) writing \(enabledModules.count) enabled + \(disabledModules.count) disabled module(s) to \(path)")
+            ensureWritable(path: path)
             let result = mgr.lara_overwritefile(target: path, data: data)
             guard result.ok else {
                 throw "Overwrite failed: \(result.message)"
@@ -816,6 +834,7 @@ struct CCEditorView: View {
                     globallogger.log("(cc) backup: \(note)")
                 }
 
+                ensureWritable(path: path)
                 let result = mgr.lara_overwritefile(target: path, data: data)
                 guard result.ok else {
                     throw "Overwrite failed: \(result.message)"
@@ -828,7 +847,7 @@ struct CCEditorView: View {
                 return
             }
 
-            guard FileManager.default.fileExists(atPath: path) else {
+            guard mgr.ladderprobe(path: path).present else {
                 status = "\(path) does not exist and there is no original backup, so there is nothing to reset."
                 return
             }
@@ -849,6 +868,7 @@ struct CCEditorView: View {
             }
 
             let data = try verifyPlist(dict, targetPath: path)
+            ensureWritable(path: path)
             let result = mgr.lara_overwritefile(target: path, data: data)
             guard result.ok else {
                 throw "Overwrite failed: \(result.message)"
@@ -873,13 +893,35 @@ struct CCEditorView: View {
 
     // MARK: backups
 
+    /// Mirrors the write rung of the ladder in kexploit/mis.m: a target mobile
+    /// cannot open for writing is handed to mobile before lara_overwritefile()
+    /// runs, so the plain open() inside it succeeds. Never called for a file
+    /// that does not exist (apfs_own() would fail anyway) and never for a file
+    /// that is already writable.
+    private func ensureWritable(path: String) {
+        let fm = FileManager.default
+        guard !fm.isWritableFile(atPath: path) else { return }
+        guard mgr.ladderprobe(path: path).present else { return }
+
+        if mgr.apfsown(path: path, uid: 501, gid: 501) {
+            globallogger.log("(cc) \(path) handed to mobile with apfs_own(501:501) before the write")
+        } else {
+            globallogger.log("(cc) \(path) is not writable by mobile and apfs_own(501:501) did not take")
+        }
+    }
+
     private func backupBeforeWrite(path: String) throws -> [String] {
         let fm = FileManager.default
         let dir = try backupsDirectory()
         let safe = backupFileName(for: path)
         var notes: [String] = []
 
-        guard fm.fileExists(atPath: path) else {
+        // The ladder decides whether there is anything to back up. A plain
+        // fileExists() reports a root-only plist as absent, which used to make
+        // this return "nothing to back up" and let the write run unprotected -
+        // which in turn made the abort-on-failure path below unreachable.
+        let probe = mgr.ladderprobe(path: path)
+        guard probe.present else {
             notes.append("nothing to back up for \(path) (file does not exist yet)")
             return notes
         }
@@ -889,20 +931,29 @@ struct CCEditorView: View {
         if fm.fileExists(atPath: snapshot.path) {
             snapshot = dir.appendingPathComponent("snapshot-\(stamp)-\(UUID().uuidString.prefix(4))-\(safe)")
         }
-        do {
-            try fm.copyItem(atPath: path, toPath: snapshot.path)
-            notes.append("snapshot: \(snapshot.lastPathComponent)")
-        } catch {
-            notes.append("snapshot failed: \(error.localizedDescription)")
+        let original = dir.appendingPathComponent("orig-\(safe)")
+
+        // Read the current bytes through the ladder: direct first, then the
+        // kernel VFS / apfs_own rungs for a target this process may not open.
+        // Both copies below are taken from those bytes, so a root-owned plist
+        // gets a real backup instead of a failed copyItem().
+        guard let data = mgr.ladderread(path: path, maxSize: 8 * 1024 * 1024, allowchown: true) else {
+            throw "could not read \(path) for the backup (\(probe.method), errno \(probe.errno))"
         }
 
-        let original = dir.appendingPathComponent("orig-\(safe)")
+        do {
+            try data.write(to: snapshot, options: .atomic)
+            notes.append("snapshot: \(snapshot.lastPathComponent) via \(probe.method)")
+        } catch {
+            throw "snapshot backup of \(path) failed: \(error.localizedDescription)"
+        }
+
         if !fm.fileExists(atPath: original.path) {
             do {
-                try fm.copyItem(atPath: path, toPath: original.path)
+                try data.write(to: original, options: .atomic)
                 notes.append("original backup: \(original.lastPathComponent)")
             } catch {
-                notes.append("original backup failed: \(error.localizedDescription)")
+                throw "original backup of \(path) failed: \(error.localizedDescription)"
             }
         } else {
             notes.append("original backup already exists: \(original.lastPathComponent)")

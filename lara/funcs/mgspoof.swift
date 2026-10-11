@@ -414,6 +414,11 @@ func mgspoofrevert() -> (ok: Bool, message: String) {
         return (false, "CacheExtra missing from MobileGestalt cache")
     }
 
+    let backup = mgspoofbackupcache()
+    guard backup.ok else {
+        return (false, "refusing to write without a backup: \(backup.message)")
+    }
+
     var removed: [String] = []
     for key in mgspoofwritekeys {
         if let slot = mgspooffindkey(key, in: cacheExtra), cacheExtra[slot] != nil {

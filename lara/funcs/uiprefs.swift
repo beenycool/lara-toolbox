@@ -38,16 +38,14 @@ func uiprefsbackupexists(_ path: String) -> Bool {
     FileManager.default.fileExists(atPath: uiprefsbackuppath(for: path).path)
 }
 
-// direct read works once sbx is ready, otherwise fall back to vfs.
-func uiprefsreaddata(_ path: String) -> Data? {
-    if let data = try? Data(contentsOf: URL(fileURLWithPath: path), options: .mappedIfSafe) {
-        return data
-    }
-    let mgr = laramgr.shared
-    if mgr.vfsready {
-        return mgr.vfsread(path: path)
-    }
-    return nil
+// direct read is tried first (it keeps working when the sandbox escape is
+// enough); otherwise the access ladder in laramgr takes over: the kernel VFS
+// read, and - for callers that are about to write anyway - apfs_own(501:501)
+// on a target this process may not touch. With a VFS namecache miss the direct
+// read is what still succeeds, and a root-only plist is what the direct read
+// reports as absent, so both rungs are needed.
+func uiprefsreaddata(_ path: String, allowchown: Bool = false) -> Data? {
+    return laramgr.shared.ladderread(path: path, allowchown: allowchown)
 }
 
 // copies the plist to Documents/lara_backups once, before the first write.
@@ -56,8 +54,12 @@ func uiprefsreaddata(_ path: String) -> Data? {
 @discardableResult
 func uiprefsbackup(_ path: String) -> (ok: Bool, message: String) {
     let fm = FileManager.default
+    let mgr = laramgr.shared
 
-    guard fm.fileExists(atPath: path) else {
+    // The ladder decides whether there is a plist: a root-only target used to
+    // be reported as absent, which sent the write path on without a backup.
+    let probe = mgr.ladderprobe(path: path)
+    guard probe.present else {
         return (true, "no existing plist at \(path), nothing to back up")
     }
 
@@ -72,20 +74,25 @@ func uiprefsbackup(_ path: String) -> (ok: Bool, message: String) {
         return (false, "failed to create backup folder: \(error)")
     }
 
-    guard let data = uiprefsreaddata(path) else {
-        return (false, "failed to read \(path) for backup")
+    // allowchown: the backup is the prerequisite for the write that follows,
+    // so a target the process may not read is handed to mobile here.
+    guard let data = uiprefsreaddata(path, allowchown: true) else {
+        return (false, "failed to read \(path) for backup (\(probe.method), errno \(probe.errno))")
     }
 
     do {
         try data.write(to: backupurl, options: .atomic)
         chmod(backupurl.path, 0o644)
-        globallogger.log("(uiprefs) backed up \(path) to \(backupurl.path)")
+        globallogger.log("(uiprefs) backed up \(path) to \(backupurl.path) (\(data.count) bytes via \(probe.method))")
         return (true, "backed up to \(backupurl.lastPathComponent)")
     } catch {
         return (false, "failed to write backup: \(error)")
     }
 }
 
+// uiprefsvalue goes through laramgr.getplistvalue(), which uses a plain
+// FileManager check; uiprefsreaddata() below it is the ladder fallback, so a
+// root-only plist still resolves instead of reporting "file not found".
 func uiprefsvalue(_ path: String, _ key: String) -> Any? {
     let result = laramgr.shared.getplistvalue(path: path, key: key)
     if result.ok {
@@ -156,7 +163,7 @@ func uiprefsrestore(_ path: String, keys: [String]) -> (ok: Bool, message: Strin
         return (false, "refusing to restore defaults without a backup: \(backup.message)")
     }
 
-    guard FileManager.default.fileExists(atPath: path) else {
+    guard laramgr.shared.ladderprobe(path: path).present else {
         return (true, "no plist at \(path), nothing to restore")
     }
 

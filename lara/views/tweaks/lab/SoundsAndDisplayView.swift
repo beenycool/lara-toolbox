@@ -106,6 +106,7 @@ struct SoundsAndDisplayView: View {
     @State private var nsstrength = nsstrengthdefault
     @State private var nsstatus: String?
     @State private var nsbusy = false
+    @State private var showresetconfirm = false
 
     var body: some View {
         List {
@@ -479,11 +480,17 @@ struct SoundsAndDisplayView: View {
             .disabled(nsbusy || !mgr.sbxready)
 
             Button(role: .destructive) {
-                resetnightshift()
+                showresetconfirm = true
             } label: {
                 Text("Reset to Stock")
             }
             .disabled(nsbusy || !mgr.sbxready)
+            .alert("Reset Night Shift to stock?", isPresented: $showresetconfirm) {
+                Button("Cancel", role: .cancel) { }
+                Button("Reset", role: .destructive) { resetnightshift() }
+            } message: {
+                Text("Removes the BlueLightReduction* keys from com.apple.CoreBrightness.plist after backing the file up. Respring or reboot so CoreBrightness falls back to stock.")
+            }
 
             if let nsstatus {
                 Text(nsstatus)
@@ -542,6 +549,14 @@ struct SoundsAndDisplayView: View {
         nsbusy = true
         defer { nsbusy = false }
 
+        let backup = uiprefsbackup(nightshiftpath)
+        guard backup.ok else {
+            nsstatus = "Backup failed; nothing was written. \(backup.message)"
+            mgr.logmsg("(nightshift) apply aborted: backup failed - \(backup.message)")
+            return
+        }
+        mgr.logmsg("(nightshift) backup: \(backup.message)")
+
         let modevalue: Int? = nsenabled ? 1 : nil
         let writes: [(String, Any?)] = [
             (nskeyenabled, nsenabled),
@@ -594,6 +609,14 @@ struct SoundsAndDisplayView: View {
 
         nsbusy = true
         defer { nsbusy = false }
+
+        let backup = uiprefsbackup(nightshiftpath)
+        guard backup.ok else {
+            nsstatus = "Backup failed; nothing was removed. \(backup.message)"
+            mgr.logmsg("(nightshift) reset aborted: backup failed - \(backup.message)")
+            return
+        }
+        mgr.logmsg("(nightshift) backup: \(backup.message)")
 
         var failures: [String] = []
         for key in [nskeyenabled, nskeycct, nskeyfactor, nskeymode] {

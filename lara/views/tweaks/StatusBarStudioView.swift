@@ -357,6 +357,7 @@ struct StatusBarStudioView: View {
         guard app != 0 else { return 0 }
 
         let selAggregator = remote_sel(proc, "statusBarStateAggregator")
+        guard rcResponds(proc, app, selAggregator) else { return 0 }
         return remote_msg(proc, app, selAggregator, 0, 0, 0, 0)
     }
 

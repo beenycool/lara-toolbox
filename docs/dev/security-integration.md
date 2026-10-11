@@ -15,30 +15,25 @@ it into the UI or changing the resolver.**
 | `lara/kexploit/pe/security_ext.m` | Resolution + read/write implementation |
 | `lara/views/tweaks/security/SecurityTogglesView.swift` | SwiftUI lab screen |
 
-No existing file was modified. The bridging header import and the navigation
-link are intentionally left to the integration pass.
+No existing file was modified by this feature. The bridging header import and
+the navigation link were applied by the integration pass (committed; verified
+compiling in CI).
 
-## Integration steps
+## Integration steps (applied)
 
 ### 1. Bridging header
 
-Add exactly this line to `lara/lara-Bridging-Header.h` (next to the other
-`kexploit` imports):
+Committed line in `lara/lara-Bridging-Header.h`:
 
 ```objc
-#import "pe/security_ext.h"
+#import "security_ext.h"
 ```
 
-Include-path style: the bridging header currently imports the `pe/` headers by
-bare filename (`#import "sbx.h"`, `#import "rc.h"`), but the project's
-`HEADER_SEARCH_PATHS` only contains `$(SRCROOT)/lara` and
-`$(SRCROOT)/lara/kexploit` — not `$(SRCROOT)/lara/kexploit/pe`. Kexploit `.m`
-files outside `pe/` therefore import pe headers as `#import "pe/apfs.h"`
-(see `ota.m`, `mis.m`, `screentime.m`). `#import "pe/security_ext.h"` works with
-the current search paths and matches that majority convention. If the
-integration pass normalises the bridging header to bare `pe` imports by adding
-`$(SRCROOT)/lara/kexploit/pe` to `HEADER_SEARCH_PATHS`, the equivalent line is
-`#import "security_ext.h"`.
+Include-path note: bare filenames resolve because Xcode's header map flattens
+header names across `HEADER_SEARCH_PATHS` (the pre-existing bare `sbx.h` /
+`rc.h` / `vfs.h` imports from `kexploit/pe/` rely on the same mechanism, and CI
+compiles without a passthrough). The earlier `pe/security_ext.h` form works too
+but was not needed.
 
 Inside `security_ext.m` the imports are bare (`darksword.h`, `xpf.h`), matching
 the other files in `lara/kexploit/pe/` (`sbx.m`, `vfs.m`).
@@ -226,10 +221,10 @@ for these scans (and the `translation` set is unsupported on SPTM devices).
    an address. That is the honest best-effort output.
 4. MAC toggle: switch "Disable MAC enforcement", type `RISK`, Apply. The log
    must show `old 1 -> 0`, `read back 0`. Revert with `ENFORCE` (or reboot).
-5. AMFI write (only if you accept the risk): type `RISK`, write 1, confirm the
-   log shows `read back 1`, then restore the original value. If the write fails
-   (read-only page / wrong address), the log shows `FAILED` and the value stays
-   unchanged.
+5. AMFI write: intentionally restricted. `sec_amfi_write` refuses to write when
+   the resolved address is NOT section-verified (all AMFI vars on 23A341 are
+   heuristic), so on iOS 26 the write controls are blocked and the UI shows the
+   blocked reason. The MAC toggle is the only verified kernel write shipped.
 6. Reboot to clear all runtime changes.
 
 ## Rollback / removal

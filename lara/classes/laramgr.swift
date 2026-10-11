@@ -12,8 +12,20 @@ import notify
 import UIKit
 import WebKit
 
-private func loadMutablePropertyListDictionary(from url: URL) throws -> NSMutableDictionary {
-    let data = try Data(contentsOf: url)
+// Loads a plist into a mutable dictionary. Falls back to the access ladder
+// (kernel VFS read, then - for callers that are about to write - apfs_own)
+// when the direct read fails, so a root-only plist is not reported as gone.
+// The chown rung changes ownership on disk and is therefore opt-in: only
+// callers that are about to overwrite the file may request it.
+private func loadMutablePropertyListDictionary(from url: URL, allowchown: Bool = false) throws -> NSMutableDictionary {
+    let data: Data
+    do {
+        data = try Data(contentsOf: url)
+    } catch {
+        guard let fallback = laramgr.shared.ladderread(path: url.path, allowchown: allowchown) else { throw error }
+        data = fallback
+    }
+
     var format = PropertyListSerialization.PropertyListFormat.binary
     let plist = try PropertyListSerialization.propertyList(
         from: data,
@@ -326,6 +338,89 @@ final class laramgr: ObservableObject {
     func vfssize(path: String) -> Int64 {
         guard vfsready else { return -1 }
         return vfs_filesize(path)
+    }
+
+    // MARK: - Access ladder
+    //
+    // Mirrors the ladder in kexploit/mis.m. The sandbox escape rewrites the
+    // seatbelt profile but does not grant DAC permission on root-only files,
+    // so FileManager.exists/dataRead can report a false "not found". Every
+    // rung reports which one answered, so "gone", "there but closed to us" and
+    // "reachable" stay distinguishable:
+    //
+    //   1. direct - FileManager / Data(contentsOf:)
+    //   2. kernel - vfssize()/vfslistdir() walk the vnode graph instead of the
+    //               process credentials, so a root-only file is still seen
+    //   3. chown  - apfsown(501:501) hands a root-owned target to mobile
+
+    /// What the read-only ladder (rungs 1 and 2) could tell about a path.
+    struct ladderinfo {
+        let present: Bool
+        let readable: Bool
+        let method: String
+        let errno: Int32
+    }
+
+    /// Read-only probe. Never changes ownership, so it is safe anywhere.
+    func ladderprobe(path: String) -> ladderinfo {
+        let fm = FileManager.default
+        if fm.fileExists(atPath: path) {
+            return ladderinfo(present: true, readable: fm.isReadableFile(atPath: path),
+                              method: "direct", errno: 0)
+        }
+
+        errno = 0
+        access(path, F_OK)
+        let directErrno = errno
+
+        guard vfsready else {
+            return ladderinfo(present: false, readable: false,
+                              method: directErrno == EACCES ? "none (direct EACCES, vfs not ready)" : "none",
+                              errno: directErrno)
+        }
+
+        // vfssize() walks the vnode graph: a root-only file is still visible
+        // even though every open() from this process fails.
+        if vfssize(path: path) >= 0 {
+            return ladderinfo(present: true, readable: false, method: "kernel (vnode size)", errno: directErrno)
+        }
+
+        // vfs_filesize() cannot see a zero-length file, so fall back to the
+        // namecache listing of the parent directory.
+        let parent = (path as NSString).deletingLastPathComponent
+        let name = (path as NSString).lastPathComponent
+        if let entries = vfslistdir(path: parent), entries.contains(where: { $0.name == name }) {
+            return ladderinfo(present: true, readable: false, method: "kernel (vfs_listdir)", errno: directErrno)
+        }
+
+        // A denied direct rung is not reported as "not found": the caller keeps
+        // the errno so it can say "not visible to this process" instead.
+        let reason = (directErrno == EACCES || directErrno == EPERM)
+            ? "none (direct denied with EACCES; kernel probe found nothing)"
+            : "none"
+        return ladderinfo(present: false, readable: false, method: reason, errno: directErrno)
+    }
+
+    /// Reads a file through the ladder. `allowchown` adds rung 3, which
+    /// changes ownership on disk and is therefore opt-in (write paths and
+    /// backups that need the bytes).
+    func ladderread(path: String, maxSize: Int = 8 * 1024 * 1024, allowchown: Bool = false) -> Data? {
+        if let data = try? Data(contentsOf: URL(fileURLWithPath: path), options: .mappedIfSafe) {
+            return data
+        }
+
+        if allowchown, apfsown(path: path, uid: 501, gid: 501) {
+            if let data = try? Data(contentsOf: URL(fileURLWithPath: path), options: .mappedIfSafe) {
+                logmsg("(ladder) \(path) reached after apfs_own(501:501)")
+                return data
+            }
+        }
+
+        if vfsready, let data = vfsread(path: path, maxSize: maxSize) {
+            logmsg("(ladder) \(path) read through vfs")
+            return data
+        }
+        return nil
     }
     
     func vfsoverwritefromlocalpath(target: String, source: String) -> Bool {
@@ -660,12 +755,16 @@ final class laramgr: ObservableObject {
     
     func setplistvalue(path: String, key: (key: String, value: Any?), force: Bool = false) -> (ok: Bool, message: String) {
         do {
-            let fm = FileManager.default
             var dict = NSMutableDictionary()
-            if !fm.fileExists(atPath: path) {
+            // The ladder decides presence. A root-owned plist used to read as
+            // "does not exist", which silently dropped every existing key
+            // during the read-modify-write below.
+            if !ladderprobe(path: path).present {
                 if !force { return (false, "file at \(path) does not exist or couldn't be found") }
             } else {
-                dict = try loadMutablePropertyListDictionary(from: URL(fileURLWithPath: path))
+                // setplistvalue is about to overwrite the file, so it may ask
+                // for the chown rung of the ladder to make the target writable.
+                dict = try loadMutablePropertyListDictionary(from: URL(fileURLWithPath: path), allowchown: true)
             }
             if let value = key.value {
                 dict[key.key] = value
@@ -693,8 +792,7 @@ final class laramgr: ObservableObject {
 
     func getplistvalue(path: String, key: String) -> (ok: Bool, message: String, value: Any?) {
         do {
-            let fm = FileManager.default
-            if fm.fileExists(atPath: path) {
+            if ladderprobe(path: path).present {
                 let dict = try loadMutablePropertyListDictionary(from: URL(fileURLWithPath: path))
                 if let value = dict[key] {
                     return (true, "success", value)
@@ -714,16 +812,29 @@ final class laramgr: ObservableObject {
         if !isapfs(path) {
             print("\(path) is apfs!")
         }
-        
+
+        // Kernel-side chown first: apfs_own() has to open() the target before it
+        // can reach its vnode, which is exactly the call that fails on a
+        // root-only file. vn_chown() resolves the vnode through the parent
+        // directory instead. Both are tried so a readable-but-not-writable file
+        // (which apfs_own() can handle) is still covered.
+        let kern = path.withCString { cPath in
+            vn_chown(cPath, uid_t(uid), gid_t(gid))
+        }
+        if kern == 0 {
+            logmsg("(ladder) changed owner of \(path) to \(uid):\(gid) via the kernel")
+            return true
+        }
+
         let result = path.withCString { cPath in
             apfs_own(cPath, uid_t(uid), gid_t(gid))
         }
-        
+
         if result != 0 {
             print("failed to chown \(path)")
             return false
         }
-        
+
         print("changed owner of \(path) to \(uid):\(gid)!")
         return true
     }

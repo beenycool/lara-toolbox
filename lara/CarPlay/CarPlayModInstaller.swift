@@ -242,7 +242,14 @@ final class CarPlayModInstaller {
 
         let stem = CarPlayModInstaller.backupStem(for: originalPath)
         let backupPath = backupDirectory + "/" + stem + ".bak"
-        if fm.fileExists(atPath: backupPath) { return true }
+        if fm.fileExists(atPath: backupPath) {
+            // never trust an existing backup we cannot verify (e.g. truncated by an interrupted write)
+            if let attrs = try? fm.attributesOfItem(atPath: backupPath),
+               let size = attrs[.size] as? Int64, size > 0 {
+                return true
+            }
+            try? fm.removeItem(atPath: backupPath)
+        }
 
         guard let data = readOriginalData(path: originalPath) else {
             globallogger.log("(carplay) backup failed: could not read \(originalPath)")
@@ -251,12 +258,17 @@ final class CarPlayModInstaller {
 
         let originPath = backupDirectory + "/" + stem + ".origin"
         do {
-            try data.write(to: URL(fileURLWithPath: backupPath))
+            // write to a temp name and rename so an interrupted write can never look like a valid backup
+            let tmpPath = backupPath + ".tmp"
+            try data.write(to: URL(fileURLWithPath: tmpPath))
+            if fm.fileExists(atPath: backupPath) { try fm.removeItem(atPath: backupPath) }
+            try fm.moveItem(atPath: tmpPath, toPath: backupPath)
             try Data(originalPath.utf8).write(to: URL(fileURLWithPath: originPath))
             globallogger.log("(carplay) backup saved: \(backupPath) (\(data.count) bytes)")
             return true
         } catch {
             globallogger.log("(carplay) backup write failed for \(originalPath): \(error.localizedDescription)")
+            try? fm.removeItem(atPath: backupDirectory + "/" + stem + ".tmp")
             return false
         }
     }
@@ -665,7 +677,7 @@ final class CarPlayModInstaller {
 
         do {
             let out = try PropertyListSerialization.data(fromPropertyList: root, format: format, options: 0)
-            try out.write(to: URL(fileURLWithPath: path))
+            try out.write(to: URL(fileURLWithPath: path), options: .atomic)
             globallogger.log("(carplay) applied \(applied) override(s) to \(path)")
             return (true, "applied \(applied) override(s)")
         } catch {

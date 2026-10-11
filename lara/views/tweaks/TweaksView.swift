@@ -81,6 +81,11 @@ struct TweaksView: View {
                 Section(header: HeaderLabel(text: "Lab", icon: "flask")) {
                     NavigationLink("Sounds & Display (Lab)", destination: SoundsAndDisplayView(mgr: mgr))
                         .disabled(!mgr.vfsready && !mgr.sbxready)
+                    NavigationLink("Memory Lab", destination: MemDumpView())
+                }
+                
+                Section(header: HeaderLabel(text: "AirDrop", icon: "antenna.radiowaves.left.and.right")) {
+                    NavigationLink("AirTroller", destination: AirTrollerView())
                 }
                 
                 Section(header: HeaderLabel(text: "Security", icon: "lock.shield")) {

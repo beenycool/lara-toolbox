@@ -33,6 +33,8 @@ struct SideloadDurabilityView: View {
     @State private var working = false
     @State private var alertMessage: String?
     @State private var showExtendConfirm = false
+    @State private var showClearWarningsConfirm = false
+    @State private var showUnbanConfirm = false
     @State private var showRestoreConfirm = false
 
     var body: some View {
@@ -65,7 +67,7 @@ struct SideloadDurabilityView: View {
                 } header: {
                     HeaderLabel(text: "Diagnostics", icon: "stethoscope")
                 } footer: {
-                    Text("Live schema from sqlite_master / PRAGMA table_info plus the plists found on disk.")
+                    Text("Live schema from sqlite_master / PRAGMA table_info, the access ladder used for each MobileIdentityData file, and the plists found on disk.")
                 }
 
                 Section {
@@ -94,14 +96,26 @@ struct SideloadDurabilityView: View {
                     }
 
                     Button("Clear Launch Warnings") {
-                        clearLaunchWarnings()
+                        showClearWarningsConfirm = true
                     }
                     .disabled(!mgr.sbxready || working)
+                    .alert("Clear launch warnings?", isPresented: $showClearWarningsConfirm) {
+                        Button("Cancel", role: .cancel) { }
+                        Button("Clear", role: .destructive) { clearLaunchWarnings() }
+                    } message: {
+                        Text("Sets launch_warning.user_override to 1 for every row in mis.db after backing the database up first. A daemon restart or reboot may be needed for the change to apply.")
+                    }
 
                     Button("Unban Lists (empty plists)") {
-                        unbanLists()
+                        showUnbanConfirm = true
                     }
                     .disabled(!mgr.sbxready || working)
+                    .alert("Empty ban list plists?", isPresented: $showUnbanConfirm) {
+                        Button("Cancel", role: .cancel) { }
+                        Button("Unban", role: .destructive) { unbanLists() }
+                    } message: {
+                        Text("Empties Rejections.plist, AuthListBannedUpps.plist and AuthListBannedCdHashes.plist. Each file is copied into lara_backups before it is touched.")
+                    }
 
                     Button("Restore Newest Backups") {
                         showRestoreConfirm = true
@@ -175,7 +189,13 @@ struct SideloadDurabilityView: View {
 
         DispatchQueue.global(qos: .userInitiated).async {
             let status = statusDictionary()
-            let present = (mis_list_plists() as [String]?) ?? []
+            // mis_status() already walked the ladder for the plists, so reuse
+            // its plistsFound instead of paying for a second vfs_listdir().
+            var present = stringArray(status["plistsFound"])
+            if present.isEmpty {
+                let listed = (mis_list_plists() as [String]?) ?? []
+                for name in listed where !present.contains(name) { present.append(name) }
+            }
 
             var rows = buildStatusRows(status, sandboxReady: sandboxReady, vfsReady: vfsReady)
             let plists = buildPlistSummary(present)
@@ -197,7 +217,9 @@ struct SideloadDurabilityView: View {
         runAction(title: "Backup mis.db",
                   success: "mis.db copied into lara_backups.",
                   failure: "Backup failed - check the log.") {
-            mis_backup_db()
+            // Read-only intent: no ownership change, so a root-owned mis.db
+            // that cannot be read is reported instead of being chowned.
+            mis_backup_db(false)
         }
     }
 
@@ -288,9 +310,26 @@ struct SideloadDurabilityView: View {
 
         let dbExists = bool(status["dbExists"])
         let dbSize = int64(status["dbSize"]) ?? 0
-        rows.append(StatusRow(label: "mis.db",
-                              value: dbExists ? "found (\(dbSize / 1024) KB)" : "missing",
-                              warn: !dbExists))
+        let dbReason = string(status["dbReason"])
+        if dbExists && dbSize > 0 {
+            rows.append(StatusRow(label: "mis.db",
+                                  value: "found (\(dbSize / 1024) KB)",
+                                  warn: false))
+        } else if dbExists {
+            rows.append(StatusRow(label: "mis.db",
+                                  value: dbReason ?? "present",
+                                  warn: true))
+        } else {
+            rows.append(StatusRow(label: "mis.db",
+                                  value: dbReason ?? "missing",
+                                  warn: true))
+        }
+
+        if let access = string(status["dbAccess"]), access != "none" {
+            rows.append(StatusRow(label: "mis.db access",
+                                  value: access,
+                                  warn: false))
+        }
 
         let opened = bool(status["opened"])
         if dbExists && !opened {
@@ -339,8 +378,13 @@ struct SideloadDurabilityView: View {
 
         let dbPath = string(status["dbPath"]) ?? "/private/var/db/MobileIdentityData/mis.db"
         lines.append("db: \(dbPath)")
+        lines.append("dir: \(string(status["dirReason"]) ?? "unknown")  mode \(string(status["dirMode"]) ?? "?")  owner \(string(status["dirOwner"]) ?? "?")")
         lines.append("exists: \(bool(status["dbExists"]) ? "yes" : "no")  wal: \(bool(status["walExists"]) ? "yes" : "no")  shm: \(bool(status["shmExists"]) ? "yes" : "no")")
+        lines.append("db: \(string(status["dbReason"]) ?? "?")  (\(string(status["dbAccess"]) ?? "none"))  errno \(int64(status["dbErrno"]) ?? 0)")
+        if let walReason = string(status["walReason"]) { lines.append("wal: \(walReason)") }
+        if let shmReason = string(status["shmReason"]) { lines.append("shm: \(shmReason)") }
         lines.append("opened: \(bool(status["opened"]) ? "yes" : "no")")
+        lines.append("kernel probe: \(bool(status["kernelProbe"]) ? "available" : "unavailable")")
 
         if let error = string(status["error"]) {
             lines.append("error: \(error)")
@@ -364,9 +408,17 @@ struct SideloadDurabilityView: View {
         lines.append("schema checks: \(checks.isEmpty ? "all expected columns present" : checks.joined(separator: "; "))")
 
         lines.append("plists:")
-        for name in Self.allPlists {
-            lines.append("  \(name): \(presentPlists.contains(name) ? "present" : "missing")")
+        if let states = status["plistStates"] as? NSDictionary {
+            for name in Self.allPlists {
+                let state = string(states[name]) ?? (presentPlists.contains(name) ? "present" : "missing (ENOENT)")
+                lines.append("  \(name): \(state)")
+            }
+        } else {
+            for name in Self.allPlists {
+                lines.append("  \(name): \(presentPlists.contains(name) ? "present" : "missing (ENOENT)")")
+            }
         }
+        lines.append("plists seen by the ladder: \(presentPlists.isEmpty ? "(none)" : presentPlists.joined(separator: ", "))")
 
         lines.append("backups: \(string(status["backupDir"]) ?? "?")")
         return lines.joined(separator: "\n")

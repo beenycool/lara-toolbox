@@ -46,7 +46,6 @@ struct dirtyZeroView: View {
                                     infoMessage: "The files this tweak patches were not found on this iOS version, so it was disabled after the last apply.",
                                     isOn: $tweak.isOn
                                 )
-                                .disabled(tweak.disabledOnUnsupported)
                             }
                         }
                     }

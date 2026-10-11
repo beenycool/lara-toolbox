@@ -638,6 +638,7 @@ struct StatusBarFakesView: View {
         guard app != 0 else { return 0 }
 
         let selAggregator = remote_sel(proc, "statusBarStateAggregator")
+        guard rcResponds(proc, app, selAggregator) else { return 0 }
         return remote_msg(proc, app, selAggregator, 0, 0, 0, 0)
     }
 
@@ -968,7 +969,11 @@ struct StatusBarFakesView: View {
                 fileExists = mgr.vfssize(path: path) >= 0
             }
             if fileExists {
-                notes.append(backupArchive(path: path))
+                let backup = backupArchive(path: path)
+                notes.append(backup)
+                if !backup.hasPrefix("backup -> ok") {
+                    return "apply -> failed (could not back up the archive before writing; \(backup))"
+                }
             } else {
                 notes.append("no archive file yet (nothing to back up)")
             }
@@ -1088,7 +1093,11 @@ struct StatusBarFakesView: View {
                 fileExists = mgr.vfssize(path: path) >= 0
             }
             if fileExists {
-                backupNote = " | " + backupArchive(path: path)
+                let backup = backupArchive(path: path)
+                if !backup.hasPrefix("backup -> ok") {
+                    return "clear -> failed (could not back up the archive before writing; \(backup))"
+                }
+                backupNote = " | " + backup
             }
         }
 
@@ -1209,6 +1218,12 @@ struct StatusBarFakesView: View {
             return "restore -> failed (no session backup taken yet)"
         }
 
+        // snapshot the current archive before overwriting it, so a wrong restore is recoverable
+        let prebackup = backupArchive(path: path)
+        if !prebackup.hasPrefix("backup -> ok") {
+            return "restore -> failed (could not back up current archive: \(prebackup))"
+        }
+
         let result = mgr.lara_overwritefile(target: path, source: backup, fallback_vfs: false)
         if result.ok {
             return "restore -> ok (\(backup) -> \(path))"
@@ -1222,8 +1237,18 @@ struct StatusBarFakesView: View {
         }
 
         let fm = FileManager.default
+        let exists = fm.fileExists(atPath: path)
+
+        // Never delete or truncate without a copy of what is being removed.
+        if exists {
+            let backup = backupArchive(path: path)
+            if !backup.hasPrefix("backup -> ok") {
+                return "remove -> failed (could not back up the archive before removing it; \(backup))"
+            }
+        }
+
         do {
-            if fm.fileExists(atPath: path) {
+            if exists {
                 try fm.removeItem(atPath: path)
                 return "remove -> deleted \(path)"
             }

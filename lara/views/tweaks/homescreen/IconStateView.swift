@@ -384,7 +384,6 @@ struct IconStateView: View {
 
     private func loadall() {
         isLoading = true
-        defer { isLoading = false }
 
         if !canRead {
             mgr.logmsg("(icons) neither the sandbox escape nor VFS is ready; icon state files may be unreadable")
@@ -406,26 +405,33 @@ struct IconStateView: View {
         }
         filesizes = sizes
 
-        var bundles = 0
-        var containers = 0
-        var entries: [iconstateappentry] = []
-        if let list = mgr.getAppList() {
-            for (bundleid, info) in list {
-                guard !bundleid.isEmpty else { continue }
-                if !info.dataFolder.isEmpty { containers += 1 }
-                guard !info.bundleFolder.isEmpty else { continue }
-                let name = info.displayName.isEmpty ? info.bundleName : info.displayName
-                guard !name.isEmpty else { continue }
-                entries.append(iconstateappentry(id: bundleid, name: name))
-                bundles += 1
-            }
-        } else {
-            mgr.logmsg("(icons) failed to enumerate installed apps")
-        }
-        apps = entries.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
-        bundlecount = bundles
-        containercount = containers
         backupentries = loadbackups()
+
+        // Enumerating every app container is slow; keep it off the main thread and publish on main.
+        DispatchQueue.global(qos: .userInitiated).async {
+            var bundles = 0
+            var containers = 0
+            var entries: [iconstateappentry] = []
+            if let list = mgr.getAppList() {
+                for (bundleid, info) in list {
+                    guard !bundleid.isEmpty else { continue }
+                    if !info.dataFolder.isEmpty { containers += 1 }
+                    guard !info.bundleFolder.isEmpty else { continue }
+                    let name = info.displayName.isEmpty ? info.bundleName : info.displayName
+                    guard !name.isEmpty else { continue }
+                    entries.append(iconstateappentry(id: bundleid, name: name))
+                    bundles += 1
+                }
+            } else {
+                mgr.logmsg("(icons) failed to enumerate installed apps")
+            }
+            DispatchQueue.main.async {
+                self.apps = entries.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+                self.bundlecount = bundles
+                self.containercount = containers
+                self.isLoading = false
+            }
+        }
     }
 
     // MARK: - hide / unhide
@@ -524,6 +530,12 @@ struct IconStateView: View {
             var copied = 0
             for source in iconsourcefiles {
                 guard let data = readdevicefile(source.path) else {
+                    // A file that exists but cannot be captured must fail the
+                    // whole backup: callers delete/overwrite these files next.
+                    if filesize(source.path) != nil {
+                        mgr.logmsg("(icons) backup failed: \(source.name) exists but could not be captured")
+                        return nil
+                    }
                     manifestfiles.append([
                         "name": source.name,
                         "path": source.path,

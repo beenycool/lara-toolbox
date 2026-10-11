@@ -22,6 +22,7 @@ struct FTPView: View {
     @AppStorage("ftpallowanonymous") private var allowanonymous: Bool = false
     @AppStorage("ftpstartinmobile") private var startinmobile: Bool = true
     @AppStorage("ftpkeeprunning") private var keeprunning: Bool = false
+    @AppStorage("ftpreadonly") private var readonly: Bool = false
 
     @State private var porttext: String = "2121"
     @State private var ipv4: String?
@@ -71,6 +72,14 @@ struct FTPView: View {
                     .foregroundColor(.secondary)
             }
 
+            Label {
+                Text("Anyone on the same network who has the password can READ, OVERWRITE and DELETE any file the app can reach. There is no undo.")
+            } icon: {
+                Image(systemName: "exclamationmark.triangle.fill")
+            }
+            .font(.footnote)
+            .foregroundColor(.red)
+
             Toggle("FTP Server", isOn: Binding(
                 get: { server.isrunning },
                 set: { wanted in
@@ -81,7 +90,7 @@ struct FTPView: View {
                     }
                 }
             ))
-            .disabled(!mgr.sbxready)
+            .disabled(!mgr.sbxready && !server.isrunning)
 
             HStack {
                 Text("Status")
@@ -241,15 +250,14 @@ struct FTPView: View {
             Toggle("Start in /var/mobile", isOn: $startinmobile)
                 .disabled(server.isrunning)
 
+            Toggle("Read-only (block uploads, deletes, mkdir/rmdir)", isOn: $readonly)
+                .disabled(server.isrunning)
+
             Toggle("Keep running in background", isOn: $keeprunning)
         } header: {
             HeaderLabel(text: "Behaviour", icon: "gearshape")
         } footer: {
-            if startinmobile {
-                Text("Sessions start in /var/mobile. Turn off to start at / (full disk). Full disk requires the Sandbox Escape.")
-            } else {
-                Text("Sessions start at / (full disk). Full disk requires the Sandbox Escape.")
-            }
+            Text("Start in /var/mobile only selects the folder a new session browses first; it is not a boundary. Clients can still navigate anywhere the Sandbox Escape can reach, including /. Read-only rejects STOR, DELE, MKD and RMD server-side.")
         }
     }
 
@@ -329,7 +337,8 @@ struct FTPView: View {
             startpath: startpath,
             username: username,
             password: password,
-            allowanonymous: allowanonymous
+            allowanonymous: allowanonymous,
+            readonly: readonly
         )
     }
 }

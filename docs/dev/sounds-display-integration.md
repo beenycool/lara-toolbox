@@ -11,7 +11,8 @@ needed** (and none was made).
 
 ## TweaksView entry
 
-Add a new section to `lara/views/tweaks/TweaksView.swift` (not modified by this change):
+A "Lab" section with this entry was added to `lara/views/tweaks/TweaksView.swift` by the
+integration pass (already wired; compiles in CI):
 
 ```swift
 Section(header: HeaderLabel(text: "Lab", icon: "flask")) {

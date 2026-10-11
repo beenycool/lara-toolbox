@@ -20,8 +20,8 @@ automatically. **No `.xcodeproj` change is needed.**
 
 ## Wiring into TweaksView.swift
 
-`TweaksView.swift` is not modified by this toolkit. Add one entry, e.g. a new section
-between "User Interface" and "System", or as a row in "System":
+`TweaksView.swift` is already wired: a "CarPlay" section with this entry was
+applied by the integration pass and compiles in CI.
 
 ```swift
 Section(header: HeaderLabel(text: "CarPlay", icon: "car.fill")) {
