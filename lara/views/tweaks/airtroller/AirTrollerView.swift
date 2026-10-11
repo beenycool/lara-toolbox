@@ -2,10 +2,9 @@
 //  AirTrollerView.swift
 //  lara
 //
-//  UI for AirTroller: AirDrop discovery + the start → cancel loop.
-//
-//  All the work lives in AirTrollerManager (Sharing/AirTrollerManager.swift);
-//  this file only renders state and fires user actions.
+//  Minimal UI for AirTroller: browse → tap a name → Survey or Troll.
+//  Every knob lives under "Advanced"; the log is collapsed by default.
+//  All the work lives in AirTrollerManager (Sharing/AirTrollerManager.swift).
 //
 
 import SwiftUI
@@ -14,93 +13,133 @@ struct AirTrollerView: View {
     @ObservedObject private var mgr: laramgr
     @ObservedObject private var manager = AirTrollerManager.shared
 
+    @State private var showadvanced = false
+    @State private var showlog = false
+
     init(mgr: laramgr = laramgr.shared) {
         self.mgr = mgr
     }
 
     var body: some View {
         List {
-            Section("Status") {
-                LabeledContent("AirDrop classes", value: manager.issupported ? "available" : "missing")
-                    .foregroundColor(manager.issupported ? .green : .red)
-                LabeledContent("State", value: manager.status)
+            browseSection
+            targetsSection
+            if manager.selectedtarget != nil {
+                actionSection
+            }
+            advancedSection
+            logSection
+        }
+        .navigationTitle("AirTroller")
+        .onAppear { manager.startscan() }
+        .onDisappear { manager.stop() }   // keep discovery alive across view churn
+    }
+
+    // MARK: browse
+
+    private var browseSection: some View {
+        Section {
+            Button {
+                manager.isscanning ? manager.stopscan() : manager.startscan()
+            } label: {
                 HStack {
-                    Text("Cycles")
-                    Spacer()
-                    Text("\(manager.cyclecount)")
-                        .monospaced()
-                        .foregroundColor(.secondary)
+                    Image(systemName: manager.isscanning ? "stop.circle.fill" : "dot.radiowaves.left.and.right")
+                    Text(manager.isscanning ? "Stop browsing" : "Start browsing")
+                        .fontWeight(.semibold)
                 }
-                if !manager.payloadpath.isEmpty {
-                    Text("payload: \(manager.payloadpath)")
-                        .font(.caption2)
+                .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(!manager.issupported)
+
+            HStack {
+                Text(manager.status)
+                    .font(.footnote)
+                    .foregroundColor(.secondary)
+                Spacer()
+                if manager.isrunning {
+                    Text("cycles \(manager.cyclecount)")
+                        .font(.footnote.monospacedDigit())
                         .foregroundColor(.secondary)
-                        .lineLimit(1)
                 }
             }
+        } footer: {
+            Text("Turn AirDrop on (Contacts Only or Everyone) and give it ~10 seconds to find nearby devices.")
+        }
+    }
 
-            Section {
-                if manager.isscanning {
-                    Button("Stop browsing") {
-                        manager.stopscan()
-                    }
-                } else {
-                    Button("Start browsing") {
-                        manager.startscan()
-                    }
-                }
-            } header: {
-                Text("Discovery")
-            } footer: {
-                Text("AirDrop must be able to see the device; the target has to be discoverable (Everyone / Contacts-only, Everyone auto-expires after ~10 minutes).")
-            }
+    // MARK: targets
 
-            Section("Targets") {
-                if manager.targets.isEmpty {
-                    Text(manager.isscanning ? "No discoverable AirDrop nodes yet." : "Start browsing to find discoverable AirDrop nodes.")
-                        .foregroundColor(.secondary)
-                } else {
-                    ForEach(manager.targets) { target in
-                        Button {
-                            manager.selectedtargetid = target.id
-                            mgr.logmsg("(airtroller) selected target \(target.name)")
-                        } label: {
-                            HStack(spacing: 12) {
-                                Image(systemName: manager.selectedtargetid == target.id ? "largecircle.fill.circle" : "circle")
-                                    .foregroundColor(manager.selectedtargetid == target.id ? .accentColor : .secondary)
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(target.name)
-                                        .foregroundColor(.primary)
-                                    if !target.subtitle.isEmpty {
-                                        Text(target.subtitle)
-                                            .font(.caption)
-                                            .foregroundColor(.secondary)
-                                    }
-                                }
-                                Spacer()
-                                if target.isdisabled {
-                                    Text("unavailable")
-                                        .font(.caption)
-                                        .foregroundColor(.orange)
-                                }
+    private var targetsSection: some View {
+        Section("Nearby") {
+            if !manager.issupported {
+                Text("AirDrop is unavailable on this build.").foregroundColor(.red)
+            } else if manager.targets.isEmpty {
+                Text(manager.isscanning ? "Searching…" : "Tap Start browsing to look for devices.")
+                    .foregroundColor(.secondary)
+            } else {
+                ForEach(manager.targets) { target in
+                    Button {
+                        manager.selectedtargetid = target.id
+                    } label: {
+                        HStack {
+                            Image(systemName: manager.selectedtargetid == target.id ? "checkmark.circle.fill" : "circle")
+                            Text(target.name).foregroundColor(.primary)
+                            Spacer()
+                            if target.isdisabled {
+                                Text("unavailable").font(.caption).foregroundColor(.orange)
                             }
                         }
-                        .buttonStyle(.plain)
                     }
+                    .buttonStyle(.plain)
                 }
             }
+        }
+    }
 
-            Section("Mode") {
-                Picker("Mode", selection: $manager.mode) {
-                    Text("Survey").tag(AirTrollerManager.Mode.survey)
-                    Text("Troll").tag(AirTrollerManager.Mode.troll)
+    // MARK: actions
+
+    private var actionSection: some View {
+        Section {
+            if manager.isrunning {
+                Button {
+                    manager.stop()
+                } label: {
+                    Label("Stop", systemImage: "stop.fill")
+                        .frame(maxWidth: .infinity)
                 }
-                .pickerStyle(.segmented)
+                .buttonStyle(.borderedProminent)
+                .tint(.red)
+            } else {
+                Button {
+                    manager.mode = .survey
+                    manager.start()
+                } label: {
+                    Label("Survey (one send, log events)", systemImage: "waveform.path.ecg")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
 
-                Text(manager.mode.summary)
-                    .font(.caption)
-                    .foregroundColor(.secondary)
+                Button {
+                    manager.mode = .troll
+                    manager.start()
+                } label: {
+                    Label("Troll", systemImage: "repeat")
+                        .frame(maxWidth: .infinity)
+                        .fontWeight(.semibold)
+                }
+                .buttonStyle(.borderedProminent)
+            }
+        } header: {
+            Text(manager.selectedtarget.map { "Target: \($0.name)" } ?? "Target")
+        }
+    }
 
+    // MARK: advanced
+
+    private var advancedSection: some View {
+        Section {
+            DisclosureGroup("Advanced", isExpanded: $showadvanced) {
                 Picker("Trigger", selection: $manager.triggerkind) {
                     Text("Delay").tag(AirTrollerManager.TriggerKind.delay)
                     Text("Event").tag(AirTrollerManager.TriggerKind.event)
@@ -108,142 +147,61 @@ struct AirTrollerView: View {
                 .pickerStyle(.segmented)
 
                 if manager.triggerkind == .delay {
-                    VStack(alignment: .leading, spacing: 4) {
-                        HStack {
-                            Text("Trigger delay")
-                            Spacer()
-                            Text("\(Int(manager.triggerdelayms)) ms")
-                                .monospaced()
-                                .foregroundColor(.secondary)
-                        }
-                        Slider(value: $manager.triggerdelayms, in: 0...2000, step: 50)
-                    }
+                    slider("Trigger delay", value: $manager.triggerdelayms, range: 0...2000, step: 50, unit: "ms")
                 } else {
-                    VStack(alignment: .leading, spacing: 4) {
-                        HStack {
-                            Text("Trigger event")
-                            Spacer()
-                            Text(eventname(manager.triggerevent))
-                                .monospaced()
-                                .foregroundColor(.secondary)
-                        }
-                        Slider(value: $manager.triggerevent, in: 0...16, step: 1)
-                        Text("SFOperation events cannot be received yet, so this falls back to the \(Int(airtrollerfallbackdelay)) ms delay until it is verified on device.")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
+                    slider("Trigger event", value: $manager.triggerevent, range: 0...16, step: 1, unit: "")
+                    Text("Live events aren't reachable yet, so this uses a \(Int(airtrollerfallbackdelay)) ms delay until the survey confirms the right event.")
+                        .font(.caption).foregroundColor(.secondary)
                 }
 
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack {
-                        Text("Gap between cycles")
-                        Spacer()
-                        Text("\(Int(manager.gapms)) ms")
-                            .monospaced()
-                            .foregroundColor(.secondary)
-                    }
-                    Slider(value: $manager.gapms, in: 0...5000, step: 100)
-                }
+                slider("Gap between cycles", value: $manager.gapms, range: 0...5000, step: 100, unit: "ms")
+                slider("Max cycles (0 = until stopped)", value: $manager.maxcycles, range: 0...50, step: 1, unit: "")
 
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack {
-                        Text("Max cycles (0 = until stopped)")
-                        Spacer()
-                        Text(manager.maxcycles == 0 ? "∞" : "\(Int(manager.maxcycles))")
-                            .monospaced()
-                            .foregroundColor(.secondary)
-                    }
-                    Slider(value: $manager.maxcycles, in: 0...50, step: 1)
-                }
-
-                Toggle("pass fromShareSheet: YES", isOn: $manager.fromsharesheet)
-                Toggle("attach preview image", isOn: $manager.attachpreviewimage)
-                Toggle("survey: replay events", isOn: $manager.replaysyntheticevents)
-                Text("fromShareSheet: NO is what the share sheet itself passes and keeps everything inside the node (no picker, no share sheet UI).")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
+                Toggle("Pass fromShareSheet: YES", isOn: $manager.fromsharesheet)
+                Toggle("Attach preview image", isOn: $manager.attachpreviewimage)
+                Toggle("Survey: replay events", isOn: $manager.replaysyntheticevents)
             }
-
-            Section("Run") {
-                HStack(spacing: 12) {
-                    Button {
-                        manager.start()
-                    } label: {
-                        Text(manager.isrunning ? "Running…" : "Start")
-                            .frame(maxWidth: .infinity)
-                    }
-                    .disabled(manager.isrunning || manager.selectedtarget == nil || !manager.issupported)
-
-                    Button {
-                        manager.stop()
-                    } label: {
-                        Text("Stop")
-                            .frame(maxWidth: .infinity)
-                    }
-                    .disabled(!manager.isrunning)
-                }
-            }
-
-            Section {
-                HStack {
-                    Text("Events")
-                    Spacer()
-                    if !manager.events.isEmpty {
-                        Button("Clear") {
-                            manager.events = []
-                            mgr.logmsg("(airtroller) event log cleared")
-                        }
-                        .font(.caption)
-                    }
-                }
-
-                ScrollViewReader { proxy in
-                    ScrollView {
-                        LazyVStack(alignment: .leading, spacing: 4) {
-                            ForEach(manager.events) { event in
-                                Text("\(event.stamp)  \(event.text)")
-                                    .font(.system(.caption2, design: .monospaced))
-                                    .foregroundColor(.secondary)
-                                    .textSelection(.enabled)
-                                    .id(event.id)
-                            }
-                        }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                    .frame(minHeight: 180)
-                    .onChange(of: manager.events.count) { _ in
-                        if let last = manager.events.last {
-                            proxy.scrollTo(last.id, anchor: .bottom)
-                        }
-                    }
-                }
-            }
-
-            Section {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("How this works")
-                        .font(.footnote.weight(.semibold))
-                    Text("AirTroller starts an AirDrop transfer to the picked node and cancels it again before the target can accept, so the request flashes up and disappears. The target has to be discoverable (AirDrop on Everyone or Contacts-only, and Everyone auto-expires after ~10 minutes on modern iOS). Your own device shows nothing while it runs, so tell the person first – only use this on someone who is up for the joke.")
-                        .font(.footnote)
-                        .foregroundColor(.secondary)
-                }
-                .padding(.vertical, 4)
-            }
-        }
-        .onAppear {
-            manager.startscan()
-        }
-        .onDisappear {
-            // Keep discovery alive across view churn: inline NavigationLink
-            // destinations are recreated whenever the parent List re-renders
-            // (every laramgr.logmsg publish), which would otherwise stop the
-            // browser before AirDrop has time to discover anything.
-            manager.stop()
+        } footer: {
+            Text("Only use this on someone who is up for the joke — the target's AirDrop prompt flashes up and disappears.")
         }
     }
 
-    private func eventname(_ value: Double) -> String {
-        "\(Int(value)) \(AirTrollerBridge.name(forOperationEvent: Int(value)))"
+    // MARK: log
+
+    private var logSection: some View {
+        Section {
+            DisclosureGroup("Log (\(manager.events.count))", isExpanded: $showlog) {
+                if manager.events.isEmpty {
+                    Text("No events yet.").font(.caption).foregroundColor(.secondary)
+                } else {
+                    ForEach(manager.events.suffix(60)) { event in
+                        Text("\(event.stamp)  \(event.text)")
+                            .font(.system(.caption2, design: .monospaced))
+                            .foregroundColor(.secondary)
+                            .textSelection(.enabled)
+                    }
+                }
+            }
+        }
+    }
+
+    // MARK: helpers
+
+    private func slider(_ title: String,
+                        value: Binding<Double>,
+                        range: ClosedRange<Double>,
+                        step: Double,
+                        unit: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text(title)
+                Spacer()
+                Text(unit.isEmpty ? "\(Int(value.wrappedValue))" : "\(Int(value.wrappedValue)) \(unit)")
+                    .monospacedDigit()
+                    .foregroundColor(.secondary)
+            }
+            Slider(value: value, in: range, step: step)
+        }
     }
 }
 
