@@ -105,6 +105,11 @@ struct AirTrollerRunConfig {
 
 final class AirTrollerManager: ObservableObject {
 
+    /// Shared instance so SwiftUI view churn (inline NavigationLink destinations
+    /// are recreated when the parent List re-renders) cannot tear down the
+    /// AirDrop browser mid-discovery.
+    static let shared = AirTrollerManager()
+
     enum Mode: String, CaseIterable, Identifiable {
         case survey = "Survey"
         case troll = "Troll"

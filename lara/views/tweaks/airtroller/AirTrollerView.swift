@@ -12,7 +12,7 @@ import SwiftUI
 
 struct AirTrollerView: View {
     @ObservedObject private var mgr: laramgr
-    @StateObject private var manager = AirTrollerManager()
+    @ObservedObject private var manager = AirTrollerManager.shared
 
     init(mgr: laramgr = laramgr.shared) {
         self.mgr = mgr
@@ -234,8 +234,11 @@ struct AirTrollerView: View {
             manager.startscan()
         }
         .onDisappear {
+            // Keep discovery alive across view churn: inline NavigationLink
+            // destinations are recreated whenever the parent List re-renders
+            // (every laramgr.logmsg publish), which would otherwise stop the
+            // browser before AirDrop has time to discover anything.
             manager.stop()
-            manager.stopscan()
         }
     }
 
