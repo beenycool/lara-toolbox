@@ -31,6 +31,10 @@
     [self fire];
 }
 
+- (void)browserDidUpdatePeople:(id)people {
+    [self fire];
+}
+
 - (void)browser:(id)browser didInsertPersonAtIndex:(id)index {
     [self fire];
 }
@@ -228,6 +232,15 @@
         if (![browser respondsToSelector:@selector(people)]) {
             return snapshot;
         }
+
+        // The framework only fills `people` from the underlying SFBrowser
+        // children inside -updateDiscoveredPeople (the share sheet calls it from
+        // its browserDidUpdatePeople: callback). Refresh before reading or the
+        // list is always empty.
+        if ([browser respondsToSelector:@selector(updateDiscoveredPeople)]) {
+            [browser updateDiscoveredPeople];
+        }
+
         NSArray *people = [browser people];
         if (![people isKindOfClass:[NSArray class]]) {
             return snapshot;

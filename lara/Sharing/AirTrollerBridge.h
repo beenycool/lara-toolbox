@@ -76,6 +76,7 @@ NS_ASSUME_NONNULL_BEGIN
 @optional
 - (void)browserDidUpdateMePeople:(id)me knownPeople:(id)known unknownPeople:(id)unknown;
 - (void)browserDidChangePeople:(id)people;
+- (void)browserDidUpdatePeople:(id)people;
 - (void)browser:(id)browser didInsertPersonAtIndex:(id)index;
 - (void)browser:(id)browser didDeletePersonAtIndex:(id)index;
 @end
