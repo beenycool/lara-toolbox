@@ -44,6 +44,10 @@ struct GestaltView: View {
     
     @State private var mgShowFileSheet: Bool = false
     
+    @State private var sbgreeton = false
+    @State private var sbgreetbusy = false
+    @State private var sbgreeterror: String? = nil
+    
     @State private var nuggetValues: [String: Bool] = [:]
     
     var body: some View {
@@ -123,6 +127,28 @@ struct GestaltView: View {
                 // some odd bindings in here that i dislike.
                 Section(header: HeaderLabel(text: "Eligibility", icon: "checklist")) {
                     PlainToggle(text: "Security Research Device UI", icon: "terminal", minSupportedVersion: 26.0, isOn: mgKeyBinding(["XYlJKKkj2hztRP1NWWnhlw"]))
+                    if mgr.dsready {
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack {
+                                Text("Full-screen SRD setup view")
+                                Spacer()
+                                if sbgreetbusy { ProgressView() }
+                                Text(sbgreeton ? "ON" : "OFF")
+                                    .foregroundColor(sbgreeton ? .green : .secondary)
+                            }
+                            Button(sbgreeton ? "Restore normal lock screen" : "Force setup screen (kernel write)") {
+                                togglesbgreet()
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .tint(sbgreeton ? .red : .blue)
+                            if let error = sbgreeterror {
+                                Text(error).font(.caption).foregroundColor(.red)
+                            }
+                            Text("Patches -[SBSetupManager shouldShowGreetingOnCoverSheet] to always return YES, so the lock screen is replaced by the setup view (⚠ Security Research Device / Property of Apple Inc.). Lock or unlock the phone afterwards — no respring needed. Live write into SpringBoard's code.")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                    }
                     PlainToggle(text: "Disable Region Restrictions", icon: "globe", isOn: mgRegionRestrictionsBinding())
                     PlainToggle(text: "Apple Intelligence", icon: "apple.intelligence", minSupportedVersion: 18.1, isOn: mgKeyBinding(["A62OafQ85EJAiiqKn4agtg"]))
                     HStack(spacing: 10) {
@@ -448,6 +474,36 @@ struct GestaltView: View {
         }
     }
     
+    private func togglesbgreet() {
+        guard mgr.dsready, !sbgreetbusy else { return }
+        sbgreetbusy = true
+        sbgreeterror = nil
+        let turnOn = !sbgreeton
+        globallogger.log("(gestalt) \(turnOn ? "forcing" : "restoring") the full-screen setup view...")
+
+        DispatchQueue.global(qos: .userInitiated).async {
+            let result = turnOn ? sbgreet_enable() : sbgreet_disable()
+
+            DispatchQueue.main.async {
+                sbgreetbusy = false
+                if result == 0 {
+                    sbgreeton = turnOn
+                    globallogger.log("(gestalt) setup view \(turnOn ? "forced on" : "restored")")
+                    if turnOn {
+                        Alertinator.shared.alert(title: "Setup screen forced on",
+                                                body: "Lock or unlock the phone now — no respring needed.",
+                                                actionLabel: "OK", action: {})
+                    }
+                } else {
+                    sbgreeterror = turnOn
+                        ? "Could not patch SpringBoard. Is it running, and is kernel r/w ready?"
+                        : "Could not restore. Respring or reboot also undoes it."
+                    globallogger.log("(gestalt) setup view patch failed (\(result))")
+                }
+            }
+        }
+    }
+
     private func restoreGestalt() {
         do {
             let docsDir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
