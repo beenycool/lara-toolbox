@@ -155,6 +155,22 @@ extern pid_t sbx_pidof(const char *name);
 
 #pragma mark diagnostics
 
+#pragma mark - mach service probe
+
+// Heap-owned so the XPC event handler never dereferences stack variables. The
+// final invocation error routinely arrives *after* probeMachService:timeout: has
+// already returned, which is what crashed the app.
+@interface AirTrollerMachProbe : NSObject
+
+@property (nonatomic, strong, nullable) dispatch_semaphore_t semaphore;
+@property (nonatomic, assign) NSInteger code;
+@property (nonatomic, copy, nullable) NSString *detail;
+
+@end
+
+@implementation AirTrollerMachProbe
+@end
+
 + (NSString *)probeMachService:(NSString *)name timeout:(double)seconds {
     // The SDK marks xpc_connection_create_mach_service unavailable on iOS, but
     // the symbol is present at runtime, so resolve it dynamically.
@@ -173,31 +189,40 @@ extern pid_t sbx_pidof(const char *name);
         return @"create returned NULL";
     }
 
+    AirTrollerMachProbe *probe = [AirTrollerMachProbe new];
+    probe.semaphore = dispatch_semaphore_create(0);
+
     // No message is sent: a sandbox/entitlement denial invalidates the
     // connection the moment it is resumed, so watching for that distinguishes
     // "blocked" from "reachable" without provoking the daemon.
-    __block NSString *status = @"reachable (connection stayed valid)";
-    dispatch_semaphore_t semaphore = dispatch_semaphore_create(0);
-
+    __weak AirTrollerMachProbe *weakProbe = probe;
     xpc_connection_set_event_handler(connection, ^(xpc_object_t event) {
-        if (xpc_get_type(event) != XPC_TYPE_ERROR) {
-            return;
+        AirTrollerMachProbe *strong = weakProbe;
+        if (strong == nil || xpc_get_type(event) != XPC_TYPE_ERROR) {
+            return; // fired after this method returned - nothing left to update
         }
+
         if (event == XPC_ERROR_CONNECTION_INVALID) {
-            status = @"connection invalid - sandbox/entitlement denied";
+            strong.code = 1;
+            strong.detail = @"connection invalid - sandbox/entitlement denied";
         } else if (event == XPC_ERROR_CONNECTION_INTERRUPTED) {
-            status = @"connection interrupted";
+            strong.code = 2;
+            strong.detail = @"connection interrupted";
         } else {
             const char *description = xpc_dictionary_get_string(event, XPC_ERROR_KEY_DESCRIPTION);
-            status = [NSString stringWithFormat:@"xpc error: %s", description ?: "?"];
+            strong.code = 3;
+            strong.detail = [NSString stringWithFormat:@"xpc error: %s", description ?: "?"];
         }
-        dispatch_semaphore_signal(semaphore);
+        dispatch_semaphore_signal(strong.semaphore);
     });
 
     xpc_connection_resume(connection);
-    dispatch_semaphore_wait(semaphore, dispatch_time(DISPATCH_TIME_NOW, (int64_t)(seconds * NSEC_PER_SEC)));
+    dispatch_semaphore_wait(probe.semaphore,
+                            dispatch_time(DISPATCH_TIME_NOW, (int64_t)(seconds * NSEC_PER_SEC)));
     xpc_connection_cancel(connection);
-    return status;
+
+    NSString *detail = probe.detail;
+    return detail != nil ? detail : @"reachable (connection stayed valid)";
 }
 
 + (NSString *)probeSharingdReachability {
@@ -223,13 +248,18 @@ extern pid_t sbx_pidof(const char *name);
 }
 
 + (NSString *)diagnoseSharingd {
+    // Mach probes only: the sandbox walk is a separate step so that a crash
+    // there can never take the probe results down with it.
     NSMutableString *summary = [NSMutableString string];
     [summary appendString:[self probeMachServices]];
     [summary appendFormat:@"\n  sharingd (full probe) -> %@", [self probeSharingdReachability]];
-
-    // Detailed sandbox walk: label/sandbox/ext_set plus every extension class.
-    sbx_dump_sandbox();
     return summary;
+}
+
+/// Walks this process's sandbox into the log. Returns a short status string.
++ (NSString *)dumpSandbox {
+    sbx_dump_sandbox();
+    return @"sandbox dumped to the log above";
 }
 
 #pragma mark sandbox adoption

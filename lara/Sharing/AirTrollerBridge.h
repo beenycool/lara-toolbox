@@ -118,6 +118,7 @@ NS_ASSUME_NONNULL_BEGIN
 /// Diagnostic: probe several mach services (including control cases) and walk
 /// this process's sandbox. The sandbox walk itself is logged line by line.
 + (NSString *)diagnoseSharingd;
++ (NSString *)dumpSandbox;
 
 /// Borrows a *valid* sandbox object from another process (never NULL) and
 /// re-probes. User-triggered only; the previous pointer is left in place if it

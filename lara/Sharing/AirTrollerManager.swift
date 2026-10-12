@@ -284,11 +284,17 @@ final class AirTrollerManager: ObservableObject {
     // MARK: diagnostics
 
     func diagnose() {
-        appendlog("diag: probing mach services and dumping the sandbox...")
+        appendlog("diag: probing mach services...")
         workqueue.async {
-            let report = AirTrollerBridge.diagnoseSharingd()
+            // Mach probes first, so they are on the log before anything riskier.
+            let services = AirTrollerBridge.diagnoseSharingd()
             DispatchQueue.main.async { [weak self] in
-                self?.appendlog("diag:\(report)")
+                self?.appendlog("diag: mach services ->\(services)")
+            }
+
+            let sandbox = AirTrollerBridge.dumpSandbox()
+            DispatchQueue.main.async { [weak self] in
+                self?.appendlog("diag: \(sandbox)")
             }
         }
     }
