@@ -86,6 +86,22 @@ extern pid_t sbx_pidof(const char *name);
 
 @end
 
+#pragma mark - mach service probe state
+
+// Heap-owned so an XPC event handler never dereferences stack variables: the
+// final invocation error routinely arrives *after*
+// +probeMachService:timeout: has already returned, which is what killed the app.
+@interface AirTrollerMachProbe : NSObject
+
+@property (nonatomic, strong, nullable) dispatch_semaphore_t semaphore;
+@property (nonatomic, assign) NSInteger code;
+@property (nonatomic, copy, nullable) NSString *detail;
+
+@end
+
+@implementation AirTrollerMachProbe
+@end
+
 #pragma mark - bridge
 
 @interface AirTrollerBridge ()
@@ -156,20 +172,6 @@ extern pid_t sbx_pidof(const char *name);
 #pragma mark diagnostics
 
 #pragma mark - mach service probe
-
-// Heap-owned so the XPC event handler never dereferences stack variables. The
-// final invocation error routinely arrives *after* probeMachService:timeout: has
-// already returned, which is what crashed the app.
-@interface AirTrollerMachProbe : NSObject
-
-@property (nonatomic, strong, nullable) dispatch_semaphore_t semaphore;
-@property (nonatomic, assign) NSInteger code;
-@property (nonatomic, copy, nullable) NSString *detail;
-
-@end
-
-@implementation AirTrollerMachProbe
-@end
 
 + (NSString *)probeMachService:(NSString *)name timeout:(double)seconds {
     // The SDK marks xpc_connection_create_mach_service unavailable on iOS, but
