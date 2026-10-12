@@ -18,6 +18,9 @@
 // headers into the Sharing bridge.
 extern int sbx_drop_sandbox(void);
 extern int sbx_restore_sandbox(void);
+extern void sbx_dump_sandbox(void);
+extern int sbx_adopt_sandbox_from_pid(pid_t pid);
+extern pid_t sbx_pidof(const char *name);
 
 #pragma mark - browser delegate (module private)
 
@@ -152,7 +155,7 @@ extern int sbx_restore_sandbox(void);
 
 #pragma mark diagnostics
 
-+ (NSString *)probeSharingdReachability {
++ (NSString *)probeMachService:(NSString *)name timeout:(double)seconds {
     // The SDK marks xpc_connection_create_mach_service unavailable on iOS, but
     // the symbol is present at runtime, so resolve it dynamically.
     typedef xpc_connection_t (*AirTrollerMachServiceFunction)(const char *, dispatch_queue_t, uint64_t);
@@ -165,14 +168,14 @@ extern int sbx_restore_sandbox(void);
         return @"xpc_connection_create_mach_service symbol missing";
     }
 
-    xpc_connection_t connection = createMachService("com.apple.sharingd", NULL, 0);
+    xpc_connection_t connection = createMachService(name.UTF8String, NULL, 0);
     if (connection == NULL) {
-        return @"xpc_connection_create_mach_service returned NULL";
+        return @"create returned NULL";
     }
 
     // No message is sent: a sandbox/entitlement denial invalidates the
     // connection the moment it is resumed, so watching for that distinguishes
-    // "blocked" from "reachable" without provoking sharingd.
+    // "blocked" from "reachable" without provoking the daemon.
     __block NSString *status = @"reachable (connection stayed valid)";
     dispatch_semaphore_t semaphore = dispatch_semaphore_create(0);
 
@@ -192,9 +195,70 @@ extern int sbx_restore_sandbox(void);
     });
 
     xpc_connection_resume(connection);
-    dispatch_semaphore_wait(semaphore, dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.5 * NSEC_PER_SEC)));
+    dispatch_semaphore_wait(semaphore, dispatch_time(DISPATCH_TIME_NOW, (int64_t)(seconds * NSEC_PER_SEC)));
     xpc_connection_cancel(connection);
     return status;
+}
+
++ (NSString *)probeSharingdReachability {
+    return [self probeMachService:@"com.apple.sharingd" timeout:1.5];
+}
+
+/// Probes several services so a control case separates "this process cannot do
+/// any global mach lookup" from "this specific service is denied".
++ (NSString *)probeMachServices {
+    NSArray<NSString *> *names = @[
+        @"com.apple.sharingd",
+        @"com.apple.sharingd.nsxpc",
+        @"com.apple.sharingd.paireddevice",
+        @"com.apple.streamingzipservice",
+        @"com.apple.system.notification_center",
+    ];
+
+    NSMutableString *summary = [NSMutableString string];
+    for (NSString *name in names) {
+        [summary appendFormat:@"\n  %@ -> %@", name, [self probeMachService:name timeout:0.4]];
+    }
+    return summary;
+}
+
++ (NSString *)diagnoseSharingd {
+    NSMutableString *summary = [NSMutableString string];
+    [summary appendString:[self probeMachServices]];
+    [summary appendFormat:@"\n  sharingd (full probe) -> %@", [self probeSharingdReachability]];
+
+    // Detailed sandbox walk: label/sandbox/ext_set plus every extension class.
+    sbx_dump_sandbox();
+    return summary;
+}
+
+#pragma mark sandbox adoption
+
++ (pid_t)pidOfProcess:(NSString *)name {
+    if (name.length == 0) {
+        return 0;
+    }
+    return sbx_pidof(name.UTF8String);
+}
+
+/// Borrows a valid sandbox object from another process (never NULL) and re-probes.
+/// The previous pointer is left in place if it does not help.
++ (NSString *)attemptSandboxAdoptionWithPID:(pid_t)pid {
+    NSString *before = [self probeSharingdReachability];
+    if ([before hasPrefix:@"reachable"]) {
+        return [NSString stringWithFormat:@"already reachable (%@)", before];
+    }
+
+    if (sbx_adopt_sandbox_from_pid(pid) != 0) {
+        return [NSString stringWithFormat:@"could not adopt the sandbox of pid %d", pid];
+    }
+
+    NSString *after = [self probeSharingdReachability];
+    if ([after hasPrefix:@"reachable"]) {
+        return [NSString stringWithFormat:@"SUCCESS - sharingd reachable after adopting pid %d (%@)", pid, after];
+    }
+
+    return [NSString stringWithFormat:@"still blocked after adopting pid %d (%@)", pid, after];
 }
 
 + (NSString *)attemptSharingdSandboxBypass {

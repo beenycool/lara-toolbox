@@ -115,6 +115,16 @@ NS_ASSUME_NONNULL_BEGIN
 /// the lookup, which no amount of AirDrop settings will fix.
 + (NSString *)probeSharingdReachability;
 
+/// Diagnostic: probe several mach services (including control cases) and walk
+/// this process's sandbox. The sandbox walk itself is logged line by line.
++ (NSString *)diagnoseSharingd;
+
+/// Borrows a *valid* sandbox object from another process (never NULL) and
+/// re-probes. User-triggered only; the previous pointer is left in place if it
+/// does not help.
++ (NSString *)attemptSandboxAdoptionWithPID:(pid_t)pid;
++ (pid_t)pidOfProcess:(NSString *)name;
+
 /// Action: drop this process's sandbox (the runtime equivalent of the private
 /// no-sandbox entitlement) so the base profile's mach-lookup rule stops blocking
 /// com.apple.sharingd. The previous state is restored if the probe still fails.
@@ -123,12 +133,6 @@ NS_ASSUME_NONNULL_BEGIN
 /// device, so this is NOT wired into the browse flow. Kept for reference until a
 /// safe variant exists.
 + (NSString *)attemptSharingdSandboxBypass;
-
-/// Diagnostic: can this process reach the com.apple.sharingd Mach service (the
-/// daemon SFBrowser talks to)? Returns a short human-readable status. A
-/// "connection invalid" result means the app sandbox/entitlements are blocking
-/// the lookup, which no amount of AirDrop settings will fix.
-+ (NSString *)probeSharingdReachability;
 
 /// Name of an SFOperation event, e.g. 5 -> "Started".
 /// Prefers the framework's own _SFOperationEventToString when it resolves.

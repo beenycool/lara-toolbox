@@ -281,6 +281,35 @@ final class AirTrollerManager: ObservableObject {
         }
     }
 
+    // MARK: diagnostics
+
+    func diagnose() {
+        appendlog("diag: probing mach services and dumping the sandbox...")
+        workqueue.async {
+            let report = AirTrollerBridge.diagnoseSharingd()
+            DispatchQueue.main.async { [weak self] in
+                self?.appendlog("diag:\(report)")
+            }
+        }
+    }
+
+    /// Borrows another process's sandbox object. Kernel surgery: only advances
+    /// when the name actually resolves to a running pid.
+    func adoptfrom(name: String) {
+        let pid = AirTrollerBridge.pidOfProcess(name)
+        guard pid != 0 else {
+            appendlog("adopt: no running process named \(name)")
+            return
+        }
+        appendlog("adopt: borrowing the sandbox object of \(name) (pid \(pid))...")
+        workqueue.async {
+            let report = AirTrollerBridge.attemptSandboxAdoption(withPID: pid)
+            DispatchQueue.main.async { [weak self] in
+                self?.appendlog("adopt: \(report)")
+            }
+        }
+    }
+
     private func schedulepoll(after seconds: Double) {
         guard isscanning else { return }
         DispatchQueue.main.asyncAfter(deadline: .now() + seconds) { [weak self] in

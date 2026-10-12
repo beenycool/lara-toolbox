@@ -160,6 +160,27 @@ struct AirTrollerView: View {
                 Toggle("Pass fromShareSheet: YES", isOn: $manager.fromsharesheet)
                 Toggle("Attach preview image", isOn: $manager.attachpreviewimage)
                 Toggle("Survey: replay events", isOn: $manager.replaysyntheticevents)
+
+                Divider()
+
+                Button {
+                    manager.diagnose()
+                } label: {
+                    Label("Diagnose mach + sandbox", systemImage: "stethoscope")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+
+                Text("Borrow another process's sandbox object — a valid pointer, unlike the earlier NULL attempt that respringed, but still kernel surgery:")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+
+                HStack {
+                    Button("adopt: sharingd") { manager.adoptfrom(name: "sharingd") }
+                        .buttonStyle(.bordered)
+                    Button("adopt: SpringBoard") { manager.adoptfrom(name: "SpringBoard") }
+                        .buttonStyle(.bordered)
+                }
             }
         } footer: {
             Text("Only use this on someone who is up for the joke — the target's AirDrop prompt flashes up and disappears.")
