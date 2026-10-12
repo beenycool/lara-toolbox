@@ -296,7 +296,7 @@ final class AirTrollerManager: ObservableObject {
     /// Borrows another process's sandbox object. Kernel surgery: only advances
     /// when the name actually resolves to a running pid.
     func adoptfrom(name: String) {
-        let pid = AirTrollerBridge.pidOfProcess(name)
+        let pid = AirTrollerBridge.pid(ofProcess: name)
         guard pid != 0 else {
             appendlog("adopt: no running process named \(name)")
             return
