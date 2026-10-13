@@ -488,17 +488,19 @@ struct GestaltView: View {
                 sbgreetbusy = false
                 if result == 0 {
                     sbgreeton = turnOn
-                    globallogger.log("(gestalt) setup view \(turnOn ? "forced on" : "restored")")
+                    let detail = String(cString: sbgreet_last_status())
+                    globallogger.log("(gestalt) setup view \(turnOn ? "forced on" : "restored"): \(detail)")
                     if turnOn {
                         Alertinator.shared.alert(title: "Setup screen forced on",
                                                 body: "Lock or unlock the phone now — no respring needed.",
                                                 actionLabel: "OK", action: {})
                     }
                 } else {
+                    let why = String(cString: sbgreet_last_status())
                     sbgreeterror = turnOn
-                        ? "Could not patch SpringBoard. Is it running, and is kernel r/w ready?"
-                        : "Could not restore. Respring or reboot also undoes it."
-                    globallogger.log("(gestalt) setup view patch failed (\(result))")
+                        ? "Could not patch SpringBoard: \(why)"
+                        : "Could not restore: \(why)"
+                    globallogger.log("(gestalt) setup view patch failed (\(result)): \(why)")
                 }
             }
         }
