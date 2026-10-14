@@ -25,7 +25,7 @@
       <Testables>
       </Testables>
    </TestAction>
-   <LaunchAction buildConfiguration="Debug" selectedDebuggerIdentifier="Xcode.DebuggerFoundation.Debugger.LLDB" selectedLauncherIdentifier="Xcode.DebuggerFoundation.Launcher.LLDB" launchStyle="0" useCustomWorkingDirectory="NO" debugDocumentVersioning="YES" allowLocationSimulation="YES">
+   <LaunchAction buildConfiguration="Debug" selectedDebuggerIdentifier="" selectedLauncherIdentifier="Xcode.IDEFoundation.Launcher.PosixSpawn" launchStyle="0" useCustomWorkingDirectory="NO" debugDocumentVersioning="YES" allowLocationSimulation="YES">
       <BuildableProductRunnable runnableDebuggingMode="0">
          <BuildableReference BuildableIdentifier = "primary" BlueprintIdentifier = "15F024122FBB9510004BD090" BuildableName = "lara.app" BlueprintName = "lara" ReferencedContainer = "container:lara.xcodeproj"></BuildableReference>
       </BuildableProductRunnable>
