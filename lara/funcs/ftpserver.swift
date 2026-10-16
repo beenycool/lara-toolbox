@@ -107,6 +107,7 @@ final class ftpserver: ObservableObject {
     private static let sessionidle: TimeInterval = 600    // absolute idle limit for an authenticated session
     private static let progressidle: TimeInterval = 120   // a transfer with no progress is aborted
     private static let dataclosegrace: TimeInterval = 0.5 // let queued data bytes drain before cancel
+    private static let maxlogins = 3                      // failed PASS attempts before the connection is dropped
 
     private static let timeformatter: DateFormatter = {
         let formatter = DateFormatter()
@@ -701,7 +702,20 @@ final class ftpserver: ObservableObject {
                 accepted = true
             }
             guard accepted else {
-                log("login refused for user \"\(user)\"")
+                session.failedlogins += 1
+                log("login refused for user \"\(user)\" (\(session.failedlogins)/\(ftpserver.maxlogins))")
+                if session.failedlogins >= ftpserver.maxlogins {
+                    let target = connection
+                    self.reply("421 Too many failed logins.\r\n", on: target) { [weak self] in
+                        guard let self else { return }
+                        if self.pending === target {
+                            self.closepending(reason: "too many failed logins")
+                        } else if self.control === target {
+                            self.closesession(reason: "too many failed logins")
+                        }
+                    }
+                    return
+                }
                 send("530 Login incorrect.\r\n")
                 return
             }
@@ -1540,6 +1554,8 @@ private final class ftpsession {
     var type: Character = "I"
     /// Offset from the last REST command, consumed by the next RETR/STOR.
     var restartoffset: Int64 = 0
+    /// Failed PASS attempts on this connection; a cap stops password guessing.
+    var failedlogins = 0
     var cwd: String
     var epsvall = false
 

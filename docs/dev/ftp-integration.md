@@ -47,7 +47,9 @@ destination and as a sheet.
 - **Watchdog**: a 15 s timer on the same queue reaps unauthenticated
   connections after 60 s, authenticated sessions after 10 min of no commands,
   and aborts a transfer that makes no progress for 120 s with `426` (so a
-  stalled peer can no longer hold the server). `FTPView` has a "Disconnect
+  stalled peer can no longer hold the server). A connection is also dropped
+  after 3 failed `PASS` attempts, so a password-guessing or stale-credential
+  loop cannot squat the second-connection slot. `FTPView` has a "Disconnect
   Client" button for an immediate kick.
 - **Data connections**: passive only. `PASV` opens an ephemeral `NWListener`
   (`on: .any`), replies `227` with the `en0` IPv4 address and the bound port;
