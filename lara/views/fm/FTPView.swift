@@ -117,6 +117,16 @@ struct FTPView: View {
                 }
             }
 
+            if server.waitingclient {
+                HStack {
+                    Text("Waiting Client")
+                    Spacer()
+                    Text("logging in")
+                        .font(.system(.footnote, design: .monospaced))
+                        .foregroundColor(.orange)
+                }
+            }
+
             if server.clientconnected {
                 HStack {
                     Text("Remote Path")
@@ -128,10 +138,18 @@ struct FTPView: View {
                         .truncationMode(.middle)
                 }
             }
+
+            if server.clientconnected || server.waitingclient {
+                Button(role: .destructive) {
+                    server.disconnectclient()
+                } label: {
+                    Label("Disconnect Client", systemImage: "xmark.circle")
+                }
+            }
         } header: {
             HeaderLabel(text: "Server", icon: "network")
         } footer: {
-            Text("Full disk file access requires the Sandbox Escape. The server will not start until it is ready.")
+            Text("Full disk file access requires the Sandbox Escape. The server will not start until it is ready. A second client may connect but only replaces the current session after it logs in and the current session is idle; it can never interrupt a transfer.")
         }
     }
 

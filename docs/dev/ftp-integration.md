@@ -38,26 +38,49 @@ destination and as a sheet.
 ## Architecture
 
 - **Control connection**: `NWListener` on the user port (default `2121`).
-  One client at a time. A second client replaces the first (logged) so a
-  stale/zombie connection can never lock the server out.
+  One *active* session plus one *second* connection that only gets the login
+  handshake. The second client can take over only after it has authenticated
+  **and** the active session is neither transferring nor recently active
+  (`takeoveridle`, 30 s). A third connection is refused with `421`. This
+  means a stale client retrying in a loop with old credentials can never
+  evict a working session, and no client can ever interrupt a transfer.
+- **Watchdog**: a 15 s timer on the same queue reaps unauthenticated
+  connections after 60 s, authenticated sessions after 10 min of no commands,
+  and aborts a transfer that makes no progress for 120 s with `426` (so a
+  stalled peer can no longer hold the server). `FTPView` has a "Disconnect
+  Client" button for an immediate kick.
 - **Data connections**: passive only. `PASV` opens an ephemeral `NWListener`
   (`on: .any`), replies `227` with the `en0` IPv4 address and the bound port;
   `EPSV` replies `229` with the port only (IPv6 friendly). Each transfer
   consumes the data connection; the next transfer needs a fresh `PASV`/`EPSV`.
   If the client sends a transfer command before the data socket is accepted,
-  the server waits up to ~2.5 s for it instead of racing.
+  the server waits up to ~2.5 s. A transfer that is superseded by another
+  command on the same connection is answered `451` instead of hijacking the
+  newer data socket.
 - **Threading**: all server state lives on one serial queue
   (`lara.ftpserver`). `@Published` updates are forwarded to the main queue.
   This is why there are no locks anywhere.
-- **Commands**: `USER PASS SYST FEAT TYPE PWD CWD CDUP LIST NLST SIZE RETR
-  STOR DELE MKD RMD PASV EPSV QUIT` plus `NOOP OPTS CLNT ALLO HELP`,
-  `XPWD/XCWD/XMKD/XRMD` aliases, and `PORT/EPRT` rejected with `502`
+- **Resumable transfers**: `REST <offset>` stores an offset that the next
+  `RETR` (seek) or `STOR` (lseek, no `O_TRUNC`) applies; the offset is
+  consumed by that transfer. `RETR` with an offset past EOF is refused with
+  `554`. A transfer is only reported `226` when the whole requested range was
+  sent; short reads, local I/O errors and a shrunken file are reported as
+  `426` with a byte count so the client knows to resume. The data connection
+  is half-closed (`.finalMessage`) and only released after a 0.5 s grace
+  period, so queued bytes are never discarded by an immediate `cancel()`.
+  `ABOR` cancels a transfer in progress (`426` + `226`).
+- **Commands**: `USER PASS SYST FEAT TYPE PWD CWD CDUP LIST NLST SIZE MDTM
+  REST RETR STOR DELE MKD RMD ABOR PASV EPSV QUIT` plus `NOOP OPTS CLNT ALLO
+  HELP`, `XPWD/XCWD/XMKD/XRMD` aliases, and `PORT/EPRT` rejected with `502`
   (active mode intentionally unsupported). Unknown verbs get `502`.
+  `FEAT` advertises `SIZE MDTM REST STREAM UTF8 PASV EPSV`.
 - **LIST format**: Unix `ls -l` style (`drwxr-xr-x 1 mobile mobile 4096 …`),
   symlinks shown as `l` with `-> target`. `NLST` returns bare names.
 - **Logging**: every command is logged (`PASS` is masked) plus connection,
   transfer and error events. Lines go to the view (`logs`) and to
   `globallogger` with an `(ftp)` prefix, so they also land in `lara.log`.
+  Transfer completions include the byte count (`226 Transfer complete (N
+  bytes).`), which makes silent truncation visible in the log.
 
 ## Security model
 
@@ -92,15 +115,30 @@ destination and as a sheet.
   while the app process stays scheduled (the existing keepalive audio trick
   helps); iOS may still suspend the app, and no FTP traffic can flow while
   suspended.
-- **TYPE A** is accepted but transfers are always binary (no CRLF
-  translation). Fine for every common client, noted for completeness.
-- **Single client / passive only** by design; multi-session support and active
-  mode are future work.
+- **TYPE A is rejected** with `504` (binary only). Transfers have always been
+  binary; the old code accepted `TYPE A` and then sent raw bytes anyway, which
+  silently corrupted anything a client expected to be CRLF-translated. Every
+  common client (curl, FileZilla, lftp, `ftplib.retrbinary`) uses `TYPE I`.
 - **Non-UTF-8 file names** are rendered with replacement characters (UTF-8 is
-  advertised in `FEAT`).
+  advertised in `FEAT`). This is unchanged: `FileManager` hands the server
+  Swift strings, so a name that is not valid UTF-8 cannot be round-tripped.
+  Fixing it needs raw `readdir` bytes end-to-end plus a raw-bytes control
+  protocol, which is out of scope here.
+- **One data session**: PASV/EPSV listeners and the in-flight transfer are
+  per-server, not per-connection, so only the active session can transfer.
+  The second connection exists to authenticate and take over, not to run a
+  parallel session. A full multi-session refactor (per-session data state) is
+  future work.
+- **No active mode** (`PORT`/`EPRT` rejected with `502`) and no `APPE`, `MLSD`
+  or `STAT`.
 - **PASV address** uses the preferred `en0` IPv4; on unusual setups (USB
   ethernet, VPN) the advertised address may not be the one the client used.
   `EPSV` avoids this because it never carries an address.
+- **Absolute paths**: every path is rooted at `/`, so `CWD /var/db` works
+  directly once the sandbox escape is applied — there is no percent-encoding
+  layer on the server. `%2F` in a URL is decoded by *curl*, not by the
+  server; sending `CWD /%2Fvar` reaches the literal path `/%2Fvar` and fails
+  with `550`. `..` above `/` is rejected.
 - The server has not been compiled/tested on device in this environment
   (no Xcode available); review on first build is recommended, especially
   the Network.framework state machine.
@@ -112,6 +150,14 @@ destination and as a sheet.
 3. Connect from a desktop client in passive mode: list `/`, navigate to
    `/var/mobile`, download and upload a file, create/remove a folder, delete a
    file, check the log lines for each command.
-4. Try `CWD ../../../../..` from the client — it must fail with `550`.
-5. Stop the server, leave the view with keep-running off, confirm it stops;
+4. `curl -r 1024-2047 ftp://…/path` (or `curl -C -` on a partial download)
+   must return exactly bytes 1024–2047, and the log must show
+   `150 … (restarting at 1024)` and `226 Transfer complete (1024 bytes)`.
+5. `curl -I` equivalent: `MDTM` on a file returns `213 yyyymmddhhmmss` in UTC.
+6. Connect a second client while a download is running: it must be able to
+   log in but be refused with `421` (and the log must say the active session
+   is busy). Connect a second client with wrong credentials: the active
+   session must stay connected and the `530` must appear in the log.
+7. `CWD ../../../../..` from the client — it must fail with `550`.
+8. Stop the server, leave the view with keep-running off, confirm it stops;
    turn keep-running on and confirm it survives leaving the view.
