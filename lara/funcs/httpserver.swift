@@ -687,7 +687,7 @@ final class httpserver: ObservableObject {
     }
 
     private func route(_ request: httprequest, on conversation: httpconversation) -> Int {
-        let path = httpserver.normalizepath(request.path)
+        let path = normalizepath(request.path)
 
         // The index is public so a browser/curl mistake says what to do.
         if path.isEmpty || path == "index" || path == "help" {
