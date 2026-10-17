@@ -76,6 +76,7 @@ struct TweaksView: View {
                     NavigationLink("Screen Time", destination: ScreenTimeView(mgr: mgr))
                     NavigationLink("FTP Server", destination: FTPView())
                         .disabled(!mgr.sbxready)
+                    NavigationLink("HTTP Control", destination: HTTPView())
                 }
                 
                 Section(header: HeaderLabel(text: "Lab", icon: "flask")) {
