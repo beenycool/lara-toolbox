@@ -470,7 +470,7 @@ final class ftpserver: ObservableObject {
             send("215 UNIX Type: L8\r\n")
 
         case "FEAT":
-            send("211-Features:\r\n PASV\r\n EPSV\r\n UTF8\r\n SIZE\r\n211 End\r\n")
+            send("211-Features:\r\n PASV\r\n EPSV\r\n UTF8\r\n SIZE\r\n SITE DU\r\n211 End\r\n")
 
         case "NOOP":
             send("200 NOOP ok.\r\n")
@@ -514,6 +514,9 @@ final class ftpserver: ObservableObject {
 
         case "SIZE":
             size(argument)
+
+        case "SITE":
+            site(argument)
 
         case "RETR":
             retr(argument)
@@ -760,6 +763,40 @@ final class ftpserver: ObservableObject {
         } else {
             send("550 Could not get file size.\r\n")
         }
+    }
+
+    private func site(_ argument: String) {
+        let tokens = argument.split(separator: " ", omittingEmptySubsequences: true).map(String.init)
+        guard let subcommand = tokens.first?.uppercased(), subcommand == "DU" else {
+            send("500 Unknown SITE command.\r\n")
+            return
+        }
+
+        guard let path = resolve(tokens.dropFirst().joined(separator: " ")) else {
+            send("550 Unable to resolve path.\r\n")
+            return
+        }
+
+        var isdir = ObjCBool(false)
+        guard FileManager.default.fileExists(atPath: path, isDirectory: &isdir) else {
+            send("550 No such file or directory.\r\n")
+            return
+        }
+
+        let usage = diskusage.walk(path, maxdepth: Int.max)
+        let space = diskusage.volume(path)
+        let lines = [
+            "213-DU for \(path)",
+            "213-apparent \(usage.apparent)",
+            "213-allocated \(usage.allocated)",
+            "213-files \(usage.files)",
+            "213-dirs \(usage.dirs)",
+            "213 volume total \(space.total)",
+            "213 volume free \(space.free)",
+            "213 volume available \(space.available)",
+            "213 End"
+        ]
+        send(lines.joined(separator: "\r\n") + "\r\n")
     }
 
     private func retr(_ argument: String) {
