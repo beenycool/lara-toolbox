@@ -61,6 +61,8 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)setSessionID:(NSString *)sessionID;
 - (void)setUrlsBeingShared:(NSArray *)urls;
 - (void)setDelegate:(id)delegate;
+- (void)setBatchDelegate:(id)delegate;
+- (void)setDiffableDelegate:(id)delegate;
 - (NSArray *)people;
 - (NSDictionary *)nodeIDToNode;
 @end
