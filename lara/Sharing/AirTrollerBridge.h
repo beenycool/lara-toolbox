@@ -75,11 +75,12 @@ NS_ASSUME_NONNULL_BEGIN
  */
 @protocol AirTrollerBrowserEvents <NSObject>
 @optional
+- (void)browserWillChangePeople:(id)people;
 - (void)browserDidUpdateMePeople:(id)me knownPeople:(id)known unknownPeople:(id)unknown;
 - (void)browserDidChangePeople:(id)people;
 - (void)browserDidUpdatePeople:(id)people;
-- (void)browser:(id)browser didInsertPersonAtIndex:(id)index;
-- (void)browser:(id)browser didDeletePersonAtIndex:(id)index;
+- (void)browser:(id)browser didInsertPersonAtIndex:(NSInteger)index;
+- (void)browser:(id)browser didDeletePersonAtIndex:(NSInteger)index;
 @end
 
 #pragma mark - bridge
@@ -125,6 +126,20 @@ NS_ASSUME_NONNULL_BEGIN
 /// does not help.
 + (NSString *)attemptSandboxAdoptionWithPID:(pid_t)pid;
 + (pid_t)pidOfProcess:(NSString *)name;
+
+/// Tries every donor candidate with a windowed borrow (adopt -> probe ->
+/// restore) and reports each result. No foreign sandbox pointer is left behind.
++ (NSString *)adoptionLadder;
+
+/// True when the node holds a live SFOperation in its _sender ivar. The
+/// framework silently refuses a send while one is in flight, so the loop uses
+/// this to prove a cycle actually started.
++ (BOOL)nodeHasLiveOperation:(nullable NSObject *)node;
+
+/// Event number __SFOperationNotifyClient last wrote into the live operation
+/// (op+0xb0), or -1 when there is no live operation. Lets the loop cancel at
+/// the real "WaitForAnswer" instead of a blind timer.
++ (NSInteger)lastOperationEventForNode:(nullable NSObject *)node;
 
 /// Action: drop this process's sandbox (the runtime equivalent of the private
 /// no-sandbox entitlement) so the base profile's mach-lookup rule stops blocking

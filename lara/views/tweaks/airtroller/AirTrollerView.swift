@@ -171,16 +171,17 @@ struct AirTrollerView: View {
                 }
                 .buttonStyle(.bordered)
 
-                Text("Borrow another process's sandbox object — a valid pointer, unlike the earlier NULL attempt that respringed, but still kernel surgery:")
+                Text("Reach sharingd by borrowing a sandbox profile for one lookup at a time (adopt → probe → restore). The old NULL-sandbox attempt respringed on 23A5308g; this refuses unless the donor passes a read-only layout check, and always restores.")
                     .font(.caption)
                     .foregroundColor(.secondary)
 
-                HStack {
-                    Button("adopt: sharingd") { manager.adoptfrom(name: "sharingd") }
-                        .buttonStyle(.bordered)
-                    Button("adopt: SpringBoard") { manager.adoptfrom(name: "SpringBoard") }
-                        .buttonStyle(.bordered)
+                Button {
+                    manager.adoptladder()
+                } label: {
+                    Label("Try borrow ladder", systemImage: "arrow.triangle.branch")
+                        .frame(maxWidth: .infinity)
                 }
+                .buttonStyle(.bordered)
             }
         } footer: {
             Text("Only use this on someone who is up for the joke — the target's AirDrop prompt flashes up and disappears.")

