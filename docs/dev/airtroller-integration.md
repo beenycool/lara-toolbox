@@ -1,5 +1,56 @@
 # AirTroller — reverse engineering + integration notes
 
+> ## Audit corrections (2026-11-18) — read this before the rest of the file
+>
+> Four independent audits of the 23A5308g cache changed the picture. The
+> behavioural descriptions below are mostly right, but **every address in this
+> document is from a different build and is wrong here by a uniform
+> `+0x13F038`**, and two structural claims are false.
+>
+> **Corrected addresses** (unslid, `Sharing` base `0x1a8ef9000`):
+>
+> | symbol | address |
+> |---|---|
+> | `-[SFAirDropNode startSendForBundleID:…]` | `0x1a8f29b90` |
+> | `-[SFAirDropNode cancelSend]` | `0x1a8f29da8` |
+> | `-[SFAirDropNode handleOperationCallback:event:withResults:]` | `0x1a8f29de0` |
+> | `-[SFAirDropBrowser start]` / `stop` / `people` | `0x1a8f24fb0` / `0x1a8f251d0` / `0x1a8f26418` |
+> | `-[SFAirDropBrowser updateDiscoveredPeople]` | `0x1a8f2520c` |
+> | `_SFOperationEventToString` (not exported) / table | `0x1a8f29ee0` / `0x1e7c10770` |
+> | share-sheet call site in `startTransferForPeople:` | `0x1b9123eb0` |
+>
+> **Structural corrections**
+>
+> * The node's in-flight operation ivar is **`_sender` at `+0x8`**, not
+>   `_operation` at `+0x90`. `cancelSend` clears it synchronously
+>   (`str xzr,[x19,#8]`), so a new `startSend` after a cancel really does create
+>   a new SFOperation. `dealloc`/`.cxx_destruct` never release it, so a cycle
+>   that skips the cancel wedges the node for the life of the process.
+> * `-people` **is** filled by the framework on every browser callback
+>   (`updateDiscoveredPeople` writes ivar `+0x28`); the old comment claiming
+>   otherwise is wrong.
+> * Threading: `startSend`/`cancelSend` take **no locks**, the operation
+>   callbacks run on `__dispatch_main_q` and the browser callbacks on a global
+>   queue. Serialise all node calls onto the main queue.
+> * `browserDidUpdatePeople:` is delivered to **`_batchDelegate`** only. The
+>   plain `_delegate` is messaged `browserWillChangePeople:` with **no
+>   `respondsToSelector:` guard**, so a delegate missing that method crashes the
+>   app on the first browser callback.
+> * Event `2` (`AskUser`) calls `_SFOperationResume(first argument)`; replaying
+>   it synthetically corrupts the node. Never do it.
+>
+> **The real gate** is not the API: `Sharing.framework` connects to
+> `com.apple.sharingd` with `xpc_connection_create_mach_service(..., flags 0)`
+> and the sandbox is consulted at connection creation. A sideloaded profile has
+> no `(allow mach-lookup ...)` for that name and the entitlement
+> (`com.apple.security.exception.mach-lookup.global-name`) lives in the
+> provisioning profile. The current implementation borrows a donor sandbox for
+> exactly the call that creates the connection and restores it immediately —
+> see `withBorrowedReachability:` in `AirTrollerBridge.m` and the layout gate in
+> `sbx.m`. The original AirTroller avoided all of this by requiring TrollStore
+> (`platform-application`, `no-sandbox`,
+> `com.apple.private.airdrop.discovery`).
+
 Feature: replicate the classic *AirTroller* prank on iOS 26 — start an AirDrop
 transfer at a target, then cancel it right as the target receives it, in a loop.
 
