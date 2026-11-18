@@ -61,7 +61,10 @@ jobs:
 
 
   release:
-    if: github.event_name != 'pull_request'
+    # Only main may publish the shared nightly. branch dispatches still build
+    # and upload the release-ipa artifact, they just do not overwrite the
+    # release that main owns.
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     needs: build
     runs-on: ubuntu-latest
 
