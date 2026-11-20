@@ -41,15 +41,41 @@
 >
 > **The real gate** is not the API: `Sharing.framework` connects to
 > `com.apple.sharingd` with `xpc_connection_create_mach_service(..., flags 0)`
-> and the sandbox is consulted at connection creation. A sideloaded profile has
-> no `(allow mach-lookup ...)` for that name and the entitlement
-> (`com.apple.security.exception.mach-lookup.global-name`) lives in the
-> provisioning profile. The current implementation borrows a donor sandbox for
-> exactly the call that creates the connection and restores it immediately —
-> see `withBorrowedReachability:` in `AirTrollerBridge.m` and the layout gate in
-> `sbx.m`. The original AirTroller avoided all of this by requiring TrollStore
-> (`platform-application`, `no-sandbox`,
-> `com.apple.private.airdrop.discovery`).
+> and the sandbox is consulted at connection creation.
+>
+> The sandbox audit (2026-11-20) settled who may do that lookup:
+>
+> * **No app gets it** — App Store or sideloaded. The compiled app profile in
+>   `AppleSandbox.kext` has an explicit mach-lookup allow-list (logd, lsd,
+>   cfprefsd, tccd, mobilegestalt.xpc, …) with no sharing entry; its only
+>   AirDrop-ish key is `com.apple.sharing.airdrop.readonly`, a *file* rule for
+>   the Downloads folder.
+> * **AirDrop still works in every app** because iOS 26 hosts the AirDrop UI
+>   remotely: `ShareSheet.framework` uses `SHSheetRemoteSceneViewController`
+>   and `com.apple.sharinguiservice.*`; `SharingUI`'s `SFAirDropViewController`
+>   is a `_UIRemoteViewController` container for `com.apple.Sharing.AirDrop`.
+>   The app never talks to `sharingd`. This is exactly why the original
+>   AirTroller required TrollStore.
+> * **The app sandbox profile does honour**
+>   `com.apple.security.exception.mach-lookup.global-name` (the compiled profile
+>   references it), and unlike `no-sandbox` that key is **not** on AMFI's
+>   privileged-entitlement list — a dev-signed binary keeps it. It is in
+>   `Config/lara.entitlements` for installs that sign with that manifest
+>   (TrollStore / ldid).
+> * **But isideload and SideStore replace the app's entitlements with the
+>   provisioning profile's** (`sign.rs`: `profile.entitlements().clone()`, no
+>   merge), so an isideload install carries none of the manifest keys. The
+>   bridge prints its own entitlements via `SecTask` in the diagnostic so the
+>   log shows which situation a device is in.
+>
+> For an isideload build the only in-process route is therefore the borrowed
+> sandbox: adopt a donor profile for exactly the call that creates the
+> connection, then restore — see `withBorrowedReachability:`. Donors, in order:
+> `SpringBoard` (always alive, loads ControlCenterUI's
+> `SFAirDropDiscoveryController`), `AirDropUI` (on demand),
+> `sharinguiservice` (remote sheet host, exactly 16 chars), `sharingd`
+> (expected to fail — it registers rather than looks up). `ShareSheet` is not a
+> process on iOS 26 and was removed from the ladder.
 
 Feature: replicate the classic *AirTroller* prank on iOS 26 — start an AirDrop
 transfer at a target, then cancel it right as the target receives it, in a loop.
