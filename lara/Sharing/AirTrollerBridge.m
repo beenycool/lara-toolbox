@@ -766,8 +766,26 @@ static void AirTrollerOnMainSync(dispatch_block_t block) {
     if (operation == NULL) {
         return -1;
     }
-    uint32_t event = *(uint32_t *)((uint8_t *)operation + 0xb0);
-    return (NSInteger)event;
+
+    // __SFOperationNotifyClient (0x1a8f208a8) stores the event as a plain
+    // 8-byte `str x20,[x21,#0xb0]` (0x1a8f209b4), before it invokes the client
+    // callback, for every operation kind. 0xb0 is not the object size: 0xb0 is
+    // the `extraBytes` argument to _CFRuntimeCreateInstance, and the object is
+    // 0xc0 (0xd0 on the custom-allocator path), so the field is the last word
+    // but one and the read is in bounds.
+    //
+    // - 0 means "no event yet"; >15 is not a valid event.
+    // - The store is not locked and not release-ordered: an acquire load is the
+    //   correct way to poll it from our thread.
+    // - _SFOperationCancel latches the cancelled byte at +0x10, after which the
+    //   framework stops delivering and this word keeps its last value. Never
+    //   read it after a cancel - a frozen 3 would look like a fresh trigger.
+    uint64_t raw = __atomic_load_n((const uint64_t *)((uint8_t *)operation + 0xb0),
+                                   __ATOMIC_ACQUIRE);
+    if (raw > 15) {
+        return -1;
+    }
+    return (NSInteger)raw;
 }
 
 - (BOOL)startSendToNode:(NSObject *)node
