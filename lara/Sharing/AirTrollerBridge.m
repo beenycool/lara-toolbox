@@ -13,7 +13,6 @@
 #import <dlfcn.h>
 #import <objc/runtime.h>
 #import <xpc/xpc.h>
-#import <Security/Security.h>
 
 // Defined in kexploit/pe/sbx.m. Declared here to avoid dragging the kernel
 // headers into the Sharing bridge.
@@ -266,10 +265,35 @@ extern pid_t sbx_pidof(const char *name);
 /// (platform-application, no-sandbox, the mach-lookup exception) can silently be
 /// absent - and then no amount of probing will explain the denial. Log this next
 /// to the probe results.
+///
+/// Security.framework is not linked into the app, so the two SecTask functions
+/// are resolved at runtime instead of adding a framework to the project.
 + (NSString *)entitlementReport {
-    SecTaskRef task = SecTaskCreateFromSelf(kCFAllocatorDefault);
+    typedef CFTypeRef (*AirTrollerSecTaskCreateFn)(CFAllocatorRef);
+    typedef CFTypeRef (*AirTrollerSecTaskCopyFn)(CFTypeRef, CFStringRef, CFErrorRef *);
+
+    static AirTrollerSecTaskCreateFn createTask = NULL;
+    static AirTrollerSecTaskCopyFn copyEntitlement = NULL;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        void *handle = dlopen("/System/Library/Frameworks/Security.framework/Security",
+                              RTLD_LAZY);
+        if (handle != NULL) {
+            createTask = (AirTrollerSecTaskCreateFn)dlsym(handle, "SecTaskCreateFromSelf");
+            copyEntitlement = (AirTrollerSecTaskCopyFn)dlsym(handle, "SecTaskCopyValueForEntitlement");
+        }
+        if (createTask == NULL || copyEntitlement == NULL) {
+            createTask = (AirTrollerSecTaskCreateFn)dlsym(RTLD_DEFAULT, "SecTaskCreateFromSelf");
+            copyEntitlement = (AirTrollerSecTaskCopyFn)dlsym(RTLD_DEFAULT, "SecTaskCopyValueForEntitlement");
+        }
+    });
+    if (createTask == NULL || copyEntitlement == NULL) {
+        return @"(SecTask symbols unavailable)";
+    }
+
+    CFTypeRef task = createTask(kCFAllocatorDefault);
     if (task == NULL) {
-        return @"SecTaskCreateFromSelf failed";
+        return @"(SecTaskCreateFromSelf returned NULL)";
     }
 
     NSArray<NSString *> *keys = @[
@@ -280,7 +304,7 @@ extern pid_t sbx_pidof(const char *name);
     ];
     NSMutableString *out = [NSMutableString string];
     for (NSString *key in keys) {
-        CFTypeRef value = SecTaskCopyValueForEntitlement(task, (__bridge CFStringRef)key, NULL);
+        CFTypeRef value = copyEntitlement(task, (__bridge CFStringRef)key, NULL);
         NSString *description = value != NULL
             ? [NSString stringWithFormat:@"%@", (__bridge id)value]
             : @"(absent)";
