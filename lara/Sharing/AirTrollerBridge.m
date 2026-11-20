@@ -20,7 +20,7 @@ extern int sbx_drop_sandbox(void);
 extern int sbx_restore_sandbox(void);
 extern void sbx_dump_sandbox(void);
 extern int sbx_adopt_sandbox_from_pid(pid_t pid);
-extern pid_t sbx_pidof(const char *name);
+extern pid_t sbx_pidbyname(const char *name);
 
 #pragma mark - browser delegate (module private)
 
@@ -381,14 +381,14 @@ static BOOL gDonorSearchFailed = NO;
 /// sheet is hosted in-process or by sharinguiservice), so that entry could only
 /// ever cost a probe timeout.
 + (NSArray<NSString *> *)donorCandidates {
-    return @[ @"SpringBoard", @"AirDropUI", @"sharinguiservice", @"sharingd" ];
+    return @[ @"SpringBoard", @"AirDropUI", @"sharinguiservice", @"AirDropExtension", @"sharingd" ];
 }
 
 + (pid_t)firstReachableDonor {
     [self airtrollerReachSetup];
 
     if (gDonorName != nil) {
-        pid_t pid = sbx_pidof(gDonorName.UTF8String);
+        pid_t pid = sbx_pidbyname(gDonorName.UTF8String);
         if (pid != 0) {
             return pid;
         }
@@ -396,7 +396,7 @@ static BOOL gDonorSearchFailed = NO;
     }
 
     for (NSString *name in [self donorCandidates]) {
-        pid_t pid = sbx_pidof(name.UTF8String);
+        pid_t pid = sbx_pidbyname(name.UTF8String);
         if (pid == 0) {
             continue;
         }
@@ -465,7 +465,7 @@ static BOOL gDonorSearchFailed = NO;
     if (name.length == 0) {
         return 0;
     }
-    return sbx_pidof(name.UTF8String);
+    return sbx_pidbyname(name.UTF8String);
 }
 
 // Borrows a valid sandbox object from another process and probes inside the
@@ -509,7 +509,7 @@ static BOOL gDonorSearchFailed = NO;
     gDonorSearchFailed = NO;
     NSMutableString *out = [NSMutableString string];
     for (NSString *name in [self donorCandidates]) {
-        pid_t pid = sbx_pidof(name.UTF8String);
+        pid_t pid = sbx_pidbyname(name.UTF8String);
         if (pid == 0) {
             [out appendFormat:@"\n  %@: not running", name];
             continue;
