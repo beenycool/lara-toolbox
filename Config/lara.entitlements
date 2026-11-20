@@ -24,6 +24,22 @@
 	<true/>
 	<key>com.apple.security.network.client</key>
 	<true/>
+	<!-- AirTroller: the app sandbox profile honours this key (it is referenced
+	     by the compiled application profile in AppleSandbox.kext) and, unlike
+	     no-sandbox, it is NOT on AMFI's privileged-entitlement list, so a
+	     dev-signed binary keeps it. It is what grants the com.apple.sharingd
+	     mach lookup that SFAirDropBrowser/SFOperation need.
+	     NOTE: isideload (and SideStore) replace the app's entitlements with the
+	     provisioning profile's, so this key only takes effect for installs that
+	     sign with this manifest (TrollStore / ldid). For isideload installs the
+	     installed binary carries none of these - the runtime report in
+	     AirTrollerBridge logs exactly what survived. -->
+	<key>com.apple.security.exception.mach-lookup.global-name</key>
+	<array>
+		<string>com.apple.sharingd</string>
+		<string>com.apple.sharingd.nsxpc</string>
+		<string>com.apple.sharingd.paireddevice</string>
+	</array>
 	<key>com.apple.private.mobileinstall.allowedSPI</key>
 	<array>
 		<string>InstallForLaunchServices</string>

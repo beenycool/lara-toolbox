@@ -123,6 +123,11 @@ NS_ASSUME_NONNULL_BEGIN
 + (NSString *)diagnoseSharingd;
 + (NSString *)dumpSandbox;
 
+/// What the installed binary actually carries (isideload/SideStore replace the
+/// app's entitlements with the provisioning profile's, so the manifest values
+/// may be absent). Printed by +diagnoseSharingd.
++ (NSString *)entitlementReport;
+
 /// Borrows a *valid* sandbox object from another process (never NULL) and
 /// re-probes. User-triggered only; the previous pointer is left in place if it
 /// does not help.

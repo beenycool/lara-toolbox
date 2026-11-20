@@ -13,6 +13,7 @@
 #import <dlfcn.h>
 #import <objc/runtime.h>
 #import <xpc/xpc.h>
+#import <Security/Security.h>
 
 // Defined in kexploit/pe/sbx.m. Declared here to avoid dragging the kernel
 // headers into the Sharing bridge.
@@ -260,12 +261,47 @@ extern pid_t sbx_pidof(const char *name);
     return summary;
 }
 
+/// What the *installed* binary actually carries. isideload/SideStore replace the
+/// app's entitlements with the provisioning profile's, so the manifest values
+/// (platform-application, no-sandbox, the mach-lookup exception) can silently be
+/// absent - and then no amount of probing will explain the denial. Log this next
+/// to the probe results.
++ (NSString *)entitlementReport {
+    SecTaskRef task = SecTaskCreateFromSelf(kCFAllocatorDefault);
+    if (task == NULL) {
+        return @"SecTaskCreateFromSelf failed";
+    }
+
+    NSArray<NSString *> *keys = @[
+        @"platform-application",
+        @"com.apple.private.security.no-sandbox",
+        @"com.apple.security.exception.mach-lookup.global-name",
+        @"application-identifier",
+    ];
+    NSMutableString *out = [NSMutableString string];
+    for (NSString *key in keys) {
+        CFTypeRef value = SecTaskCopyValueForEntitlement(task, (__bridge CFStringRef)key, NULL);
+        NSString *description = value != NULL
+            ? [NSString stringWithFormat:@"%@", (__bridge id)value]
+            : @"(absent)";
+        [out appendFormat:@"\n  %@ = %@", key, description];
+        if (value != NULL) {
+            CFRelease(value);
+        }
+    }
+
+    CFRelease(task);
+    return out;
+}
+
 + (NSString *)diagnoseSharingd {
     // Mach probes only: the sandbox walk is a separate step so that a crash
     // there can never take the probe results down with it.
     NSMutableString *summary = [NSMutableString string];
     [summary appendString:[self probeMachServices]];
     [summary appendFormat:@"\n  sharingd (full probe) -> %@", [self probeSharingdReachability]];
+    [summary appendString:@"\n  installed entitlements:"];
+    [summary appendString:[self entitlementReport]];
     return summary;
 }
 
