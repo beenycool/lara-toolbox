@@ -304,11 +304,24 @@ static BOOL gDonorSearchFailed = NO;
     });
 }
 
-/// Ordered candidates: the share sheet process hosts the AirDrop UI, SpringBoard
-/// hosts the cover-sheet share UI, sharingd itself normally registers the service
-/// rather than looking it up.
+/// Ordered candidates, from the 23A5308g process study:
+///
+/// - SpringBoard: always alive, and it loads ControlCenterUI, the only image
+///   that instantiates SFAirDropDiscoveryController - which cannot work without
+///   a sharingd lookup. Unconditional rule, zero lifetime risk.
+/// - AirDropUI: /Applications/AirDropUI.app, the AirDrop browse/receive UI.
+///   Launched on demand, so it may not be running.
+/// - sharinguiservice: the remote share-sheet host (iOS 16+); exactly 16 chars,
+///   which is the kernel's p_comm limit, so the name fits. Only alive while a
+///   sheet is up.
+/// - sharingd: expected to fail - a daemon registers the service rather than
+///   looking it up. Kept as an explicit last-ditch probe.
+///
+/// "ShareSheet" is deliberately absent: there is no such process on iOS 26 (the
+/// sheet is hosted in-process or by sharinguiservice), so that entry could only
+/// ever cost a probe timeout.
 + (NSArray<NSString *> *)donorCandidates {
-    return @[ @"ShareSheet", @"SpringBoard", @"sharingd" ];
+    return @[ @"SpringBoard", @"AirDropUI", @"sharinguiservice", @"sharingd" ];
 }
 
 + (pid_t)firstReachableDonor {
